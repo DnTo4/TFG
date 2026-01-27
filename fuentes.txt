@@ -1,3 +1,4 @@
 https://carla-counterfactual-and-recourse-library.readthedocs.io/en/latest/index.html
 
 https://christophm.github.io/interpretable-ml-book/counterfactual.html
+	- https://arxiv.org/pdf/1712.08443

@@ -2,14 +2,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from perceptron import train_model as train_pt_model
-from svm import train_model as train_svm_model
-from growing_spheres import growing_spheres_generacion, feature_selection
+from perceptron import train_model
+from growing_spheres import growing_spheres_generation, feature_selection
 
 # ---- parámetros ----
-MODELO = "svm"  # "perceptron" o "svm"
-
-N_INICIALES = 70      # n puntos de inicio
+N_INICIALES = 70      # n de puntos de inicio
 SEEDS = 5       # semillas por punto
 MUESTRAS = 500    # muestras por cáscara
 ANCHO_BANDA = 0.5       # eta inicial
@@ -51,7 +48,7 @@ def contraejemplos(modelo, entrada):
         x0 = entrada[i]
         for s in seeds:
             try:
-                cEj = growing_spheres_generacion(
+                cEj = growing_spheres_generation(
                     predict_fn=predict_fn,
                     x=x0,
                     muestras=MUESTRAS,
@@ -83,71 +80,33 @@ def plot(modelo, entrada, y, cEjs, inic):
     pad = 0.8
     x_min, x_max = entrada[:,0].min()-pad, entrada[:,0].max()+pad
     y_min, y_max = entrada[:,1].min()-pad, entrada[:,1].max()+pad
-    xx, yy = np.meshgrid(
-        np.linspace(x_min, x_max, 400),
-        np.linspace(y_min, y_max, 400)
-    )
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400),
+                         np.linspace(y_min, y_max, 400))
     grid = np.c_[xx.ravel(), yy.ravel()]
 
     plt.figure(figsize=(7,6))
-
-    # Frontera de decisión
     if has_proba:
         probs = modelo.predict_proba(grid)[:,1].reshape(xx.shape)
-        plt.contour(xx, yy, probs, levels=[0.5], colors="k")
+        plt.contour(xx, yy, probs, levels=[0.5])
     elif has_decision:
         scores = modelo.decision_function(grid).reshape(xx.shape)
-        plt.contour(xx, yy, scores, levels=[0.0], colors="k")
+        plt.contour(xx, yy, scores, levels=[0.0])
     else:
         y_grid = predict_fn(grid).reshape(xx.shape)
-        plt.contour(xx, yy, y_grid, levels=[0.5], colors="k")
+        plt.contour(xx, yy, y_grid, levels=[0.5])
 
-    # Puntos por clase
-    clases = np.unique(y)
-    colores = ["tab:blue", "tab:orange"]
-
-    for cls, col in zip(clases, colores):
-        mask = (y == cls)
-        plt.scatter(
-            entrada[mask, 0],
-            entrada[mask, 1],
-            s=15,
-            color=col,
-            label=f"Clase {cls}",
-            alpha=0.7
-        )
-
-    # Contraejemplos
+    plt.scatter(entrada[:,0], entrada[:,1], s=10)
     if len(cEjs) > 0:
         for a, b in zip(inic, cEjs):
-            plt.plot([a[0], b[0]], [a[1], b[1]], color="gray", linewidth=1)
-
-        plt.scatter(
-            inic[:,0], inic[:,1],
-            marker='o', s=70,
-            facecolors='none',
-            edgecolors='k',
-            label="Punto inicial"
-        )
-        plt.scatter(
-            cEjs[:,0], cEjs[:,1],
-            marker='X', s=90,
-            color='red',
-            label="Contraejemplo"
-        )
-
-    plt.title(f"Contraejemplos encontrados: {len(cEjs)}")
-    plt.xlabel("x1")
-    plt.ylabel("x2")
-    plt.legend()
-    plt.tight_layout()
+            plt.plot([a[0], b[0]], [a[1], b[1]])
+        plt.scatter(inic[:,0], inic[:,1], marker='o', s=60)
+        plt.scatter(cEjs[:,0],    cEjs[:,1],    marker='X', s=80)
+    plt.title(f"Contraejemplos: {len(cEjs)}")
+    plt.xlabel("x1"); plt.ylabel("x2")
     plt.show()
 
 def main():
-    if MODELO == "perceptron":
-        modelo, (X_train, y_train, X_test, y_test), acc = train_pt_model()
-    else:
-        modelo, (X_train, y_train, X_test, y_test), acc = train_svm_model()
+    modelo, (X_train, y_train, X_test, y_test), acc = train_model()
     print(f"Accuracy test: {acc:.4f}")
 
     entrada = np.vstack([X_train, X_test])
