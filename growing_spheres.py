@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 def vectores_unitarios(n, d, rng):
     # Genera n vectores aleatorios en R^d
@@ -21,10 +22,18 @@ def muestrea_cascara(centro, r_inf, r_sup, n, rng):
 
 # Growing Spheres 
 def growing_spheres_generacion(predict_fn, x, *, muestras=512, ancho_banda=0.5, max_iters=200, random_state=0):
+    # Guardar nombres de columnas si x es un DataFrame
+    columnas = list(x.columns) if hasattr(x, 'columns') else None
+
+    def predict_wrapped(arr):
+        if columnas is not None:
+            return predict_fn(pd.DataFrame(arr, columns=columnas))
+        return predict_fn(arr)
+
     # Reducir dimensiones de entrada y guardar prediccion original
     x = np.asarray(x, float).ravel()
     rng = np.random.default_rng(random_state)
-    y_x = predict_fn(x.reshape(1, -1))[0]
+    y_x = predict_wrapped(x.reshape(1, -1))[0]
 
     # Crea muestras candidatos en una esfera de radio eta centrada en x
     eta = float(ancho_banda)
@@ -32,7 +41,7 @@ def growing_spheres_generacion(predict_fn, x, *, muestras=512, ancho_banda=0.5, 
     cand = muestrea_cascara(x, 0.0, eta, muestras, rng)
 
     # Si hay de otra clase, reducimos eta hasta encontrar una banda sin
-    while np.any(predict_fn(cand) != y_x) and iter < max_iters:
+    while np.any(predict_wrapped(cand) != y_x) and iter < max_iters:
         eta *= 0.5
         cand = muestrea_cascara(x, 0.0, eta, muestras, rng)
         iter += 1
@@ -43,14 +52,14 @@ def growing_spheres_generacion(predict_fn, x, *, muestras=512, ancho_banda=0.5, 
     cand = muestrea_cascara(x, a0, a1, muestras, rng)
 
     # Mientras no haya de otra clase, aumenta la banda en eta
-    while not np.any(predict_fn(cand) != y_x) and iter < max_iters:
+    while not np.any(predict_wrapped(cand) != y_x) and iter < max_iters:
         a0 = a1
         a1 = a1 + eta
         cand = muestrea_cascara(x, a0, a1, muestras, rng)
         iter += 1
 
     # Elegir el candidato mas cercano en la ultima banda
-    labels = predict_fn(cand)
+    labels = predict_wrapped(cand)
     idx = np.where(labels != y_x)[0]
 
     # Si no hay ninguno, lanzar error
@@ -64,15 +73,22 @@ def growing_spheres_generacion(predict_fn, x, *, muestras=512, ancho_banda=0.5, 
 
 # Reduce el numero de variables modificadas en el contraejemplo
 def feature_selection(predict_fn, x, CEj):
+    columnas = list(x.columns) if hasattr(x, 'columns') else None
+
+    def predict_wrapped(arr):
+        if columnas is not None:
+            return predict_fn(pd.DataFrame(arr, columns=columnas))
+        return predict_fn(arr)
+
     # Asegurarse de que x y CEj son arrays 1D
     x = np.asarray(x, float).ravel()
     cEj = np.asarray(CEj, float).ravel().copy()
 
     # Obtener la prediccion original
-    y_x = predict_fn(x.reshape(1, -1))[0]
+    y_x = predict_wrapped(x.reshape(1, -1))[0]
 
     # intentar apagar la caracteristica con menor cambio manteniendo que siga siendo de diferente clase
-    while predict_fn(cEj.reshape(1, -1))[0] != y_x:
+    while predict_wrapped(cEj.reshape(1, -1))[0] != y_x:
         # Cacula el cambio
         dif = np.abs(cEj - x)
 
@@ -87,7 +103,7 @@ def feature_selection(predict_fn, x, CEj):
         prueba[k] = x[k]
 
         # Si sigue siendo de la otra clase, aceptar el cambio
-        if predict_fn(prueba.reshape(1, -1))[0] != y_x:
+        if predict_wrapped(prueba.reshape(1, -1))[0] != y_x:
             cEj = prueba
         else:
             break

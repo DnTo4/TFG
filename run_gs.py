@@ -1,54 +1,50 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import joblib
 
 from perceptron import train_model as train_pt_model
 from svm import train_model as train_svm_model
+from mlp import train_model as train_mlp_model
 from growing_spheres import growing_spheres_generacion, feature_selection
 
 # ---- parámetros ----
-MODELO = "svm"  # "perceptron" o "svm"
+MODELO = "mlp"  # "perceptron", "svm" o "mlp"
 
-N_INICIALES = 70      # n puntos de inicio
-SEEDS = 5       # semillas por punto
-MUESTRAS = 500    # muestras por cáscara
-ANCHO_BANDA = 0.5       # eta inicial
-MAX_ITERS = 200     # iteraciones máximas por fase
+N_INICIALES = 40      # n puntos de inicio
+SEEDS = 2             # semillas por punto
+MUESTRAS = 500       # muestras por cáscara
+ANCHO_BANDA = 0.5     # eta inicial
+MAX_ITERS = 50       # iteraciones máximas por fase
 UMBRAL = 1e-3
 RANDOM_STATE = 42
 
-FS = True    # aplicar feature selection
+TRAIN = "iris.data"
+TEST  = "iris.data"
+TARGET  = None
+
+FS = True              # aplicar feature selection
 GUARDAR_CSV = True     # guardar contraejemplos en CSV
-PATH = "contraejemplos.csv"
+CSV_PATH   = "contraejemplos.csv"
+MODEL_PATH = "modelo.joblib"
 # ----------------------------
 
-# Verifica si un contraejemplo es nuevo (distancia > umbral)
 def nuevo(x, cEjs, umbral):
-    if not cEjs:
+    # Verifica si un contraejemplo es nuevo
+    if len(cEjs) == 0:
         return True
-    
     dist = np.linalg.norm(np.asarray(cEjs) - x, axis=1)
     return np.all(dist > umbral)
 
-def contraejemplos(modelo, entrada):
-    # Aleatoriedad reproducible
+def contraejemplos(modelo, entrada_df):
     rng = np.random.default_rng(RANDOM_STATE)
-
-    # Funcion de prediccion del modelo
     predict_fn = modelo.predict
-
-    # Seleccion aleatoria de N_INICIALES indices de X
-    idx = rng.permutation(len(entrada))[:N_INICIALES]
-
-    # Para cada modelo prueba SEEDS muestreos por punto
+    idx = rng.permutation(len(entrada_df))[:N_INICIALES]
     seeds = rng.integers(0, 10_000_000, size=SEEDS)
+    cEjs, inic, labels_orig = [], [], []
 
-    # Almacenar contraejemplos y puntos iniciales
-    cEjs, inic = [], []
-
-    # Para cada punto inicial prueba varias semillas
     for i in idx:
-        x0 = entrada[i]
+        x0 = entrada_df.iloc[[i]]
         for s in seeds:
             try:
                 cEj = growing_spheres_generacion(
@@ -59,119 +55,80 @@ def contraejemplos(modelo, entrada):
                     max_iters=MAX_ITERS,
                     random_state=int(s),
                 )
-                # Aplicar feature selection si esta activado
                 if FS:
                     cEj = feature_selection(predict_fn, x0, cEj)
 
-                # Añadir si es nuevo
-                if nuevo(cEj, cEjs, UMBRAL):
-                    cEjs.append(cEj); inic.append(x0)
+                cEj_arr = np.asarray(cEj, dtype=float).flatten()
+                x0_arr  = np.asarray(x0, dtype=float).flatten()
+
+                if nuevo(cEj_arr, cEjs, UMBRAL):
+                    cEjs.append(cEj_arr)
+                    inic.append(x0_arr)
+                    labels_orig.append(predict_fn(x0)[0])
             except RuntimeError:
                 continue
-    # Si no hay contraejemplos, devolver arrays vacíos
+
     if not cEjs:
-        return np.zeros((0, entrada.shape[1])), np.zeros((0, entrada.shape[1]))
-    
-    return np.array(cEjs), np.array(inic)
+        return np.zeros((0, entrada_df.shape[1])), np.zeros((0, entrada_df.shape[1])), np.array([])
+    return np.array(cEjs, dtype=float), np.array(inic, dtype=float), np.array(labels_orig)
 
-# Graficar resultados
-def plot(modelo, entrada, y, cEjs, inic):
-    predict_fn   = modelo.predict
-    has_proba    = hasattr(modelo, "predict_proba")
-    has_decision = hasattr(modelo, "decision_function")
+def guardarCSV(cEjs, starts, labels_orig, nombres):
+    # Guarda los contraejemplos en CSV
+    if len(cEjs) == 0:
+        print("No hay contraejemplos para guardar.")
+        return
 
-    pad = 0.8
-    x_min, x_max = entrada[:,0].min()-pad, entrada[:,0].max()+pad
-    y_min, y_max = entrada[:,1].min()-pad, entrada[:,1].max()+pad
-    xx, yy = np.meshgrid(
-        np.linspace(x_min, x_max, 400),
-        np.linspace(y_min, y_max, 400)
-    )
-    grid = np.c_[xx.ravel(), yy.ravel()]
+    starts = np.asarray(starts, dtype=float)
+    cEjs   = np.asarray(cEjs,   dtype=float)
+    dists   = np.linalg.norm(cEjs - starts, axis=1)
+    difs    = cEjs - starts
+    changed = np.abs(difs) > 1e-9
 
-    plt.figure(figsize=(7,6))
+    data = {}
+    for i, col in enumerate(nombres):
+        data[f"{col}"]         = starts[:,i]
+        data[f"ce_{col}"]      = cEjs[:,i]
+        data[f"delta_{col}"]   = difs[:,i]
+        data[f"changed_{col}"] = changed[:,i].astype(int)
 
-    # Frontera de decisión
-    if has_proba:
-        probs = modelo.predict_proba(grid)[:,1].reshape(xx.shape)
-        plt.contour(xx, yy, probs, levels=[0.5], colors="k")
-    elif has_decision:
-        scores = modelo.decision_function(grid).reshape(xx.shape)
-        plt.contour(xx, yy, scores, levels=[0.0], colors="k")
-    else:
-        y_grid = predict_fn(grid).reshape(xx.shape)
-        plt.contour(xx, yy, y_grid, levels=[0.5], colors="k")
+    data["pred_orig"]            = labels_orig
+    data["num_features_changed"] = changed.sum(axis=1)
+    data["dist_l2"]              = dists
 
-    # Puntos por clase
-    clases = np.unique(y)
-    colores = ["tab:blue", "tab:orange"]
-
-    for cls, col in zip(clases, colores):
-        mask = (y == cls)
-        plt.scatter(
-            entrada[mask, 0],
-            entrada[mask, 1],
-            s=15,
-            color=col,
-            label=f"Clase {cls}",
-            alpha=0.7
-        )
-
-    # Contraejemplos
-    if len(cEjs) > 0:
-        for a, b in zip(inic, cEjs):
-            plt.plot([a[0], b[0]], [a[1], b[1]], color="gray", linewidth=1)
-
-        plt.scatter(
-            inic[:,0], inic[:,1],
-            marker='o', s=70,
-            facecolors='none',
-            edgecolors='k',
-            label="Punto inicial"
-        )
-        plt.scatter(
-            cEjs[:,0], cEjs[:,1],
-            marker='X', s=90,
-            color='red',
-            label="Contraejemplo"
-        )
-
-    plt.title(f"Contraejemplos encontrados: {len(cEjs)}")
-    plt.xlabel("x1")
-    plt.ylabel("x2")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    df = pd.DataFrame(data)
+    df.to_csv(CSV_PATH, index=False)
+    print(f"CSV guardado: {CSV_PATH}")
 
 def main():
-    if MODELO == "perceptron":
-        modelo, (X_train, y_train, X_test, y_test), acc = train_pt_model()
-    else:
-        modelo, (X_train, y_train, X_test, y_test), acc = train_svm_model()
+
+    modelos = {
+        "perceptron": train_pt_model,
+        "svm": train_svm_model,
+        "mlp": train_mlp_model
+    }
+
+    if MODELO not in modelos:
+        raise ValueError(f"Modelo no soportado: {MODELO}")
+        
+    train_func = modelos[MODELO]
+    modelo, (X_train, y_train, X_test, y_test), acc, nombres = train_func(TRAIN, TEST, TARGET)
+
     print(f"Accuracy test: {acc:.4f}")
 
-    entrada = np.vstack([X_train, X_test])
-    labels = np.concatenate([y_train, y_test])
+    # Guardar modelo para analizar.py
+    joblib.dump({"modelo": modelo, "nombres": nombres}, MODEL_PATH)
+    print(f"Modelo guardado: {MODEL_PATH}")
 
-    cEjs, starts = contraejemplos(modelo, entrada)
+    # Combinar DataFrames
+    entrada_df = pd.concat([X_train, X_test], axis=0)
+    labels     = pd.concat([y_train, y_test], axis=0)
+
+    # Generación de contraejemplos
+    cEjs, starts, labels_orig = contraejemplos(modelo, entrada_df)
     print(f"Contraejemplos encontrados: {len(cEjs)}")
 
-    # Guardar contraejemplos en CSV
     if GUARDAR_CSV and len(cEjs) > 0:
-        dists = np.linalg.norm(cEjs - starts, axis=1)
-        df = pd.DataFrame({
-            "x0_1": starts[:,0], "x0_2": starts[:,1],
-            "ce_1": cEjs[:,0],    "ce_2": cEjs[:,1],
-            "dist_l2": dists
-        })
-        df.to_csv(PATH, index=False)
-        print(f"CSV Guardado: {PATH}")
-
-    # Graficar si es 2D
-    if entrada.shape[1] == 2:
-        plot(modelo, entrada, labels, cEjs, starts)
-    else:
-        print("Plot omitido")
+        guardarCSV(cEjs, starts, labels_orig, nombres)
 
 if __name__ == "__main__":
     main()

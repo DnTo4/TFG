@@ -1,0 +1,13 @@
+- Utilizar diferentes clasificadores (ya lo tengo)
+- Para conjunto de datos intentar buscar el contraejemplo mínimo: 
+	- Ver la distancia mínima para cada instancia (ver puntos de frontera)
+	- Usar un algoritmo genético (o cualquier metaheurística)
+- Ver con qué modelos se generan mejores fronteras (más suaves o más abruptas)
+
+Dado un conjunto de datos, buscar ejemplos y contraejemplos cuya distancia sea mínima
+Dado el modelo ver los puntos (random) que determinan mejor la frontera
+Probar a eliminar los puntos más lejanos y ver si cambia el valor
+Hacer un estudio de qué condiciones favorecen un modelo u otro (sea de datasets o modelo)
+
+===============================================
+Añadir fitness sharing porque se aglomeran mucho
