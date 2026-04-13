@@ -6,8 +6,8 @@ import joblib
 CSV_PATH   = "contraejemplos.csv"
 MODEL_PATH = "modelo.joblib" # Ruta donde se guarda el modelo
 
-FRONTERA = False   # visualizar frontera de decision (requiere modelo)
-FLECHAS  = False   # visualizar flechas origen -> contraejemplo
+FRONTERA = True    # visualizar frontera de decision (requiere modelo)
+FLECHAS  = False    # visualizar flechas origen -> contraejemplo
 # ----------------------------
 
 

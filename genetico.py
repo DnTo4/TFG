@@ -1,13 +1,14 @@
 import numpy as np
 import pandas as pd
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
-from sklearn.metrics import accuracy_score
 import joblib
 
+from perceptron import train_model as train_pt_model
+from svm import train_model as train_svm_model
+from mlp import train_model as train_mlp_model
+
 # RUTAS
-RUTA_DATASET = "iris.data"
+RUTA_DATASET_TRAIN = "iris.data"
+RUTA_DATASET_TEST  = "iris.data"
 RUTA_MODELO  = "modelo.joblib"
 RUTA_SALIDA  = "contraejemplos.csv"
 
@@ -15,73 +16,63 @@ RUTA_SALIDA  = "contraejemplos.csv"
 TIPO_MODELO  = "mlp" # "svm", "mlp", "perceptron"
 
 # HIPERPARÁMETROS GA
-TAMANO_POBLACION = 300
-GENERACIONES     = 150
-TASA_MUTACION    = 0.2
-NUM_PARES        = 70
+TAMANO_POBLACION = 500   # (Antes 300) Más población = mejor cobertura y diversidad en el espacio
+GENERACIONES     = 300   # (Antes 150) Más tiempo para refinar los puntos y acercarlos a la frontera
+TASA_MUTACION    = 0.25  # (Antes 0.2) Ligeramente superior para evitar estancamiento prematuro
+NUM_PARES        = 50    # (Antes 70) Menos pares requeridos aísla a que solo se seleccionen los de mayor calidad sin chocar con la distancia mínima
 
-def cargar_datos(ruta_archivo, columna_objetivo=None):
-    df = pd.read_csv(ruta_archivo)
-    
-    if columna_objetivo is None:
-        columna_objetivo = df.columns[-1]
-        
-    y = df[columna_objetivo]
-    X = df.drop(columns=[columna_objetivo])
-    
-    X = pd.get_dummies(X, drop_first=True)
-    
-    limites = np.vstack([X.min().values, X.max().values]).T
-    
-    return X, y, limites, X.columns.tolist()
-
-def entrenar_clasificador(X, y, tipo_modelo="svm"):
-    if tipo_modelo == "svm":
-        from sklearn.svm import SVC
-        clf = SVC(kernel="rbf", C=1.0, gamma="scale", random_state=42)
-    elif tipo_modelo == "mlp":
-        from sklearn.neural_network import MLPClassifier
-        clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=2000, random_state=0)
-    elif tipo_modelo == "perceptron":
-        from sklearn.linear_model import Perceptron
-        clf = Perceptron(max_iter=1000, tol=1e-3, random_state=0)
-    else:
+def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
+    modelos = {
+        "perceptron": train_pt_model,
+        "svm": train_svm_model,
+        "mlp": train_mlp_model
+    }
+    if tipo_modelo not in modelos:
         raise ValueError(f"Modelo '{tipo_modelo}' no soportado.")
         
-    modelo = make_pipeline(StandardScaler(), clf)
-    modelo.fit(X, y)
+    entrenar_func = modelos[tipo_modelo]
+    modelo, (X_train, y_train, X_test, y_test), acc, nombres = entrenar_func(ruta_train, ruta_test, None)
     
-    y_pred = modelo.predict(X)
-    print(f"Precisión del modelo ({tipo_modelo}) en entrenamiento: {accuracy_score(y, y_pred):.2f}")
-    return modelo
+    print(f"Precisión del modelo ({tipo_modelo}) en prueba: {acc:.2f}")
+    
+    # Calcular límites
+    X_combined = pd.concat([X_train, X_test], axis=0)
+    limites = np.vstack([X_combined.min().values, X_combined.max().values]).T
+    
+    return modelo, limites, nombres
 
 def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share):
+    # Divide los individuos en puntos originales y contraejemplos
     puntos_a = poblacion[:, :d_caracteristicas]
     puntos_b = poblacion[:, d_caracteristicas:]
     
+    # Convierte los puntos a DataFrames
     df_a = pd.DataFrame(puntos_a, columns=nombres_caracteristicas)
     df_b = pd.DataFrame(puntos_b, columns=nombres_caracteristicas)
     
+    # Predice las clases
     clases_a = modelo.predict(df_a)
     clases_b = modelo.predict(df_b)
     
+    # Calcula la distancia euclidiana entre los puntos
     distancias = np.linalg.norm(puntos_a - puntos_b, axis=1)
     
+    # Penaliza los individuos que están en la misma clase
     misma_clase = (clases_a == clases_b)
     distancias[misma_clase] += 999999.0
     
-    # === FITNESS SHARING POR TRANSICIÓN DE CLASE ===
-    # Contamos cuántos individuos están explorando cada frontera específica (ej. Clase A vs Clase B)
+
+    # Contamos cuántos individuos están explorando cada frontera específica (Fitness sharing)
     idx_validos = ~misma_clase
     
+    # Identifica las transiciones de clase (0_1, 1_2, ...)
     transiciones = np.array([f"{a}_{b}" for a, b in zip(clases_a, clases_b)])
     
     if np.any(idx_validos):
         transiciones_validas = transiciones[idx_validos]
         unicas, conteos = np.unique(transiciones_validas, return_counts=True)
         
-        # Penalizamos la distancia multiplicándola por la cantidad de clones en esa misma frontera.
-        # Esto fuerza al algoritmo a mantener un equilibrio y explorar TODAS las combinaciones de clases.
+        # Penalizar la distancia multiplicándola por la cantidad de clones en esa misma frontera.
         for trans, count in zip(unicas, conteos):
             mascara = (transiciones == trans) & idx_validos
             distancias[mascara] *= count
@@ -99,24 +90,24 @@ def seleccion_torneo(poblacion, aptitudes, k=3):
     return poblacion[mejor_indice]
 
 def cruce(padre1, padre2, alfa=0.5):
+    # Cruce aritmético (trazar una línea entre los padres y tomar puntos intermedios)
     hijo1 = alfa * padre1 + (1 - alfa) * padre2
     hijo2 = alfa * padre2 + (1 - alfa) * padre1
     return hijo1, hijo2
 
 def mutar(individuo, limites_completos, tasa_mutacion=0.1, sigma=0.1):
+    # Añadir ruido gaussiano 
     mutado = np.copy(individuo)
     for i in range(len(mutado)):
         if np.random.rand() < tasa_mutacion:
             ruido = np.random.normal(0, sigma * (limites_completos[i, 1] - limites_completos[i, 0]))
             mutado[i] += ruido
+            # Mantener los valores dentro de los límites
             mutado[i] = np.clip(mutado[i], limites_completos[i, 0], limites_completos[i, 1])
     return mutado
 
-def extraer_mejores_pares_diversos(poblacion, aptitudes, n_pares=40, dist_minima=0.5):
-    """
-    Filtra la población final para obtener hasta 'n_pares' pares válidos separados 
-    por al menos 'dist_minima' a través de toda la frontera hallada.
-    """
+def filtrar_contraejemplos(poblacion, aptitudes, n_pares=40, dist_minima=0.5):
+    # Elimina los individuos que están en la misma clase
     indices_validos = np.where(aptitudes < 900000)[0]
     if len(indices_validos) == 0:
         return []
@@ -124,24 +115,28 @@ def extraer_mejores_pares_diversos(poblacion, aptitudes, n_pares=40, dist_minima
     pob_valida = poblacion[indices_validos]
     aptitudes_validas = aptitudes[indices_validos]
     
+    # Ordena los individuos por aptitud
     orden = np.argsort(aptitudes_validas)
     pob_ordenada = pob_valida[orden]
     
+    # Obtiene las dimensiones de cada punto
     d_dimensiones = pob_ordenada.shape[1] // 2
     
     pares_seleccionados = []
     
     for individuo in pob_ordenada:
-        punto_a = individuo[:d_dimensiones]
-        muy_cerca = False
+        punto_orig = individuo[:d_dimensiones]
+        cerca = False
         
         for sel in pares_seleccionados:
-            punto_a_sel = sel[:d_dimensiones]
-            if np.linalg.norm(punto_a - punto_a_sel) < dist_minima:
-                muy_cerca = True
+            # Calcula la distancia entre el punto actual y los puntos ya seleccionados
+            punto_guardado = sel[:d_dimensiones]
+            # Si la distancia es menor a la distancia mínima, se descarta el punto
+            if np.linalg.norm(punto_orig - punto_guardado) < dist_minima:
+                cerca = True
                 break
                 
-        if not muy_cerca:
+        if not cerca:
             pares_seleccionados.append(individuo)
             if len(pares_seleccionados) == n_pares:
                 break
@@ -149,38 +144,50 @@ def extraer_mejores_pares_diversos(poblacion, aptitudes, n_pares=40, dist_minima
     return np.array(pares_seleccionados)
 
 def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacion=300, generaciones=150, tasa_mutacion=0.2, num_pares=40):
+    # Obtiene las dimensiones de cada punto
     d_caracteristicas = limites.shape[0]
+
+    # Inicializa la población
     poblacion = inicializar_poblacion(tamano_poblacion, limites, d_caracteristicas)
+
+    # Calcula los límites 
     limites_completos = np.vstack([limites, limites])
     
     # La distancia elegida a filtrar para limpiar los pares finales
     dist_minima_salida = np.mean(limites[:, 1] - limites[:, 0]) * 0.1
     
     historial_mejores = []
-    mejor_individuo_global = None
-    mejor_aptitud_global = float('inf')
+    elite = None
+    mejor_aptitud = float('inf')
     
     print("\nIniciando algoritmo genético...\n")
     for gen in range(generaciones):
+        # Evalúa la aptitud de cada individuo
         aptitudes = evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share=1.0)
         
+        # Obtiene el índice del individuo con la mejor aptitud
         indice_min_aptitud = np.argmin(aptitudes)
         mejor_aptitud_gen = aptitudes[indice_min_aptitud]
         
-        if mejor_aptitud_gen < mejor_aptitud_global:
-            mejor_aptitud_global = mejor_aptitud_gen
-            mejor_individuo_global = poblacion[indice_min_aptitud].copy()
+        # Si la aptitud del individuo actual es mejor que la mejor aptitud global, se actualiza
+        if mejor_aptitud_gen < mejor_aptitud:
+            mejor_aptitud = mejor_aptitud_gen
+            elite = poblacion[indice_min_aptitud].copy()
             
-        historial_mejores.append(mejor_aptitud_global)
+        historial_mejores.append(mejor_aptitud)
         
+        # Imprime la mejor aptitud cada 10 generaciones
         if gen % 10 == 0 or gen == generaciones - 1:
-            valor = mejor_aptitud_global if mejor_aptitud_global < 900000 else "Aún no hay pares válidos"
+            valor = mejor_aptitud if mejor_aptitud < 900000 else "Aún no hay pares válidos"
             print(f"Generación {gen}: Mejor Distancia = {valor if isinstance(valor, str) else round(valor, 4)}")
 
+        # Crea una nueva población
         nueva_poblacion = []
-        if mejor_aptitud_global < 900000:
-            nueva_poblacion.extend([mejor_individuo_global, mejor_individuo_global])
+        # Si hay un individuo con buena aptitud, se añade a la nueva población
+        if mejor_aptitud < 900000:
+            nueva_poblacion.extend([elite, elite])
             
+        # Mientras la nueva población no esté completa, se añaden individuos
         while len(nueva_poblacion) < tamano_poblacion:
             p1 = seleccion_torneo(poblacion, aptitudes)
             p2 = seleccion_torneo(poblacion, aptitudes)
@@ -193,8 +200,7 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacio
             
         poblacion = np.array(nueva_poblacion[:tamano_poblacion])
         
-    # Re-evaluar cruda para clasificar al final por distancia purista 
-    # y así exportar los pares limpios des-ponderados 
+    # Re-evaluar  
     puntos_a = poblacion[:, :d_caracteristicas]
     puntos_b = poblacion[:, d_caracteristicas:]
     df_a = pd.DataFrame(puntos_a, columns=nombres_caracteristicas)
@@ -204,8 +210,8 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacio
     aptitudes_finales = np.linalg.norm(puntos_a - puntos_b, axis=1)
     aptitudes_finales[clases_a == clases_b] += 999999.0
     
-    # Extraemos 40 pares super diversos a lo ancho
-    pares = extraer_mejores_pares_diversos(poblacion, aptitudes_finales, n_pares=num_pares, dist_minima=dist_minima_salida)
+    # Extraer n_pares diversos
+    pares = filtrar_contraejemplos(poblacion, aptitudes_finales, n_pares=num_pares, dist_minima=dist_minima_salida)
     
     return pares, historial_mejores
 
@@ -241,13 +247,11 @@ def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="con
 
 if __name__ == "__main__":
     
-    X_entrenamiento, y_entrenamiento, limites_datos, nombres_dim = cargar_datos(RUTA_DATASET)
-    
-    modelo_entrenado = entrenar_clasificador(X_entrenamiento, y_entrenamiento, TIPO_MODELO)
+    modelo_entrenado, limites_datos, nombres_dim = entrenar_clasificador(RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO)
     
     joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
     
-    # Ejecutamos el algoritmo genético con los hiperparámetros globales
+    # Ejecutar el algoritmo genético con los hiperparámetros globales
     pares_finales, historial = algoritmo_genetico(
         modelo=modelo_entrenado, 
         limites=limites_datos,
