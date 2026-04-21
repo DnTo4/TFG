@@ -35,8 +35,33 @@ def crear_dataset_no_lineal(nombre_archivo, n_puntos=100, seed=42):
     # Mezclar datos antes de guardar
     df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
     df.to_csv(nombre_archivo, index=False)
-    print(f"Archivo '{nombre_archivo}' generado.")
+    print(f"Archivo '{nombre_archivo}' (Círculos concéntricos) generado.")
 
-# Generar Train y Test
-crear_dataset_no_lineal("train_nolineal.csv", n_puntos=100, seed=42)
-crear_dataset_no_lineal("test_nolineal.csv", n_puntos=100, seed=123)
+def crear_moons(nombre_archivo, n_puntos=200, noise=0.15, seed=42):
+    from sklearn.datasets import make_moons
+    X, y = make_moons(n_samples=n_puntos, noise=noise, random_state=seed)
+    df = pd.DataFrame(X, columns=["x1", "x2"])
+    df["y"] = y
+    df.to_csv(nombre_archivo, index=False)
+    print(f"Archivo '{nombre_archivo}' (Lunas entrelazadas) generado.")
+
+def crear_lineal_2d(nombre_archivo, n_puntos=200, seed=42):
+    from sklearn.datasets import make_classification
+    X, y = make_classification(n_samples=n_puntos, n_features=2, n_redundant=0, 
+                               n_clusters_per_class=1, random_state=seed, 
+                               class_sep=1.5) # class_sep alto para q sea mas limpio
+    df = pd.DataFrame(X, columns=["x1", "x2"])
+    df["y"] = y
+    df.to_csv(nombre_archivo, index=False)
+    print(f"Archivo '{nombre_archivo}' (Separación Lineal 2D) generado.")
+
+if __name__ == "__main__":
+    # Generar círculos concéntricos (train y test)
+    crear_dataset_no_lineal("train_nolineal.csv", n_puntos=150, seed=42)
+    crear_dataset_no_lineal("test_nolineal.csv", n_puntos=50, seed=123)
+
+    # Generar lunas
+    crear_moons("train_moons.csv", n_puntos=200, seed=42)
+    
+    # Generar lineal
+    crear_lineal_2d("train_lineal.csv", n_puntos=200, seed=42)

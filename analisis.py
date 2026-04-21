@@ -3,11 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 
-CSV_PATH   = "contraejemplos.csv"
+CSV_PATH   = "contraejemplos_memeticos.csv"
 MODEL_PATH = "modelo.joblib" # Ruta donde se guarda el modelo
 
 FRONTERA = True    # visualizar frontera de decision (requiere modelo)
 FLECHAS  = False    # visualizar flechas origen -> contraejemplo
+USAR_SHAP = False   # True = Priorizar importancia global del modelo, False = Priorizar los ejes donde hubo más movimiento empírico
 # ----------------------------
 
 
@@ -101,73 +102,124 @@ def analizar_csv(path):
             )
 
     # Visualización
-    if nombres is not None:
-        plot_contraejemplos(df, nombres, score)
+    plot_contraejemplos(df, nombres, score)
 
 
-def plot_contraejemplos(df, nombres, score):
+def plot_contraejemplos(df, nombres=None, score=None):
 
-    # Seleccionar las dos variables más importantes por score
-    ranking = np.argsort(score)[::-1]
-    idx_a, idx_b = ranking[0], ranking[1]
-    var_a, var_b = nombres[idx_a], nombres[idx_b]
+    print("\nPreparando gráfico...")
+    modelo = None
+    nombres_modelo = None
+
+    # Intentar cargar el modelo (necesario para SHAP y frontera)
+    try:
+        bundle         = joblib.load(MODEL_PATH)
+        modelo         = bundle["modelo"]
+        nombres_modelo = bundle["nombres"]
+    except FileNotFoundError:
+        print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera y SHAP.")
+
+    var_a, var_b = None, None
+
+    # Intentar primero con SHAP
+    if USAR_SHAP and modelo is not None and nombres_modelo is not None:
+        try:
+            import shap
+            X_orig = df[nombres_modelo]
+            
+            # Pasar función de predicción
+            predict_fn = modelo.predict_proba if hasattr(modelo, "predict_proba") else modelo.predict
+            
+            # Tomar una muestra
+            n_samples = min(200, len(X_orig))
+            X_sample = shap.sample(X_orig, n_samples)
+            
+            explainer = shap.Explainer(predict_fn, X_sample)
+            shap_values = explainer(X_sample)
+            
+            vals = shap_values.values
+            if len(vals.shape) == 3: # Multiclase
+                shap_importance = np.abs(vals).mean(axis=(0, 2))
+            else:
+                shap_importance = np.abs(vals).mean(axis=0)
+
+            ranking_shap = np.argsort(shap_importance)[::-1]
+            var_a = nombres_modelo[ranking_shap[0]]
+            var_b = nombres_modelo[ranking_shap[1]]
+            print(f"Variables SHAP: '{var_a}' y '{var_b}'")
+        except Exception as e:
+            print(f"Error SHAP: {e}")
+
+    # Si SHAP falla, vuelve al antiguo
+    if var_a is None or var_b is None:
+        if nombres is not None and score is not None:
+            print("Usando frecuencia x magnitud")
+            ranking = np.argsort(score)[::-1]
+            var_a, var_b = nombres[ranking[0]], nombres[ranking[1]]
+        else:
+            print("No se pudo seleccionar variables para el gráfico.")
+            return
 
     orig_a = df[var_a].values
     orig_b = df[var_b].values
     ce_a   = df[f"ce_{var_a}"].values
     ce_b   = df[f"ce_{var_b}"].values
 
+    clases_all = sorted(df["pred_orig"].unique())
+    # Definimos colores base usando una paleta extensa por si hay muchas clases
+    colores_base  = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#E91E63", "#00BCD4"]
+    colores_osc   = ["#0D47A1", "#1B5E20", "#E65100", "#4A148C", "#880E4F", "#006064"]
+
     plt.figure(figsize=(7, 6))
 
-    # Graficar frontera de decision
-    if FRONTERA:
-        try:
-            bundle         = joblib.load(MODEL_PATH)
-            modelo         = bundle["modelo"]
-            nombres_modelo = bundle["nombres"]
+    # Graficar frontera de decision (regiones coloreadas)
+    if FRONTERA and modelo is not None:
+        from matplotlib.colors import ListedColormap
+        pad   = 0.8
+        x_min = min(orig_a.min(), ce_a.min()) - pad
+        x_max = max(orig_a.max(), ce_a.max()) + pad
+        y_min = min(orig_b.min(), ce_b.min()) - pad
+        y_max = max(orig_b.max(), ce_b.max()) + pad
 
-            pad   = 0.8
-            x_min = min(orig_a.min(), ce_a.min()) - pad
-            x_max = max(orig_a.max(), ce_a.max()) + pad
-            y_min = min(orig_b.min(), ce_b.min()) - pad
-            y_max = max(orig_b.max(), ce_b.max()) + pad
+        xx, yy = np.meshgrid(
+            np.linspace(x_min, x_max, 400),
+            np.linspace(y_min, y_max, 400)
+        )
 
-            xx, yy = np.meshgrid(
-                np.linspace(x_min, x_max, 400),
-                np.linspace(y_min, y_max, 400)
-            )
-
-            # Grid con todas las columnas del modelo;
-            # las no seleccionadas se fijan a su media en el CSV
-            grid_full = np.zeros((xx.size, len(nombres_modelo)))
-            for j, col in enumerate(nombres_modelo):
-                if col == var_a:
-                    grid_full[:, j] = xx.ravel()
-                elif col == var_b:
-                    grid_full[:, j] = yy.ravel()
-                else:
-                    grid_full[:, j] = df[col].mean() if col in df.columns else 0.0
-
-            grid_df = pd.DataFrame(grid_full, columns=nombres_modelo)
-
-            if hasattr(modelo, "predict_proba"):
-                Z = modelo.predict_proba(grid_df)[:, 1].reshape(xx.shape)
-                plt.contour(xx, yy, Z, levels=[0.5], colors="k", linewidths=1.2)
-            elif hasattr(modelo, "decision_function"):
-                dec = modelo.decision_function(grid_df)
-                Z = (dec[:, 0] if dec.ndim > 1 else dec).reshape(xx.shape)
-                plt.contour(xx, yy, Z, levels=[0.0], colors="k", linewidths=1.2)
+        # Grid con todas las columnas del modelo;
+        # las no seleccionadas se fijan a su media en el CSV
+        grid_full = np.zeros((xx.size, len(nombres_modelo)))
+        for j, col in enumerate(nombres_modelo):
+            if col == var_a:
+                grid_full[:, j] = xx.ravel()
+            elif col == var_b:
+                grid_full[:, j] = yy.ravel()
             else:
-                Z = modelo.predict(grid_df).reshape(xx.shape)
-                plt.contour(xx, yy, Z, levels=[0.5], colors="k", linewidths=1.2)
+                grid_full[:, j] = df[col].mean() if col in df.columns else 0.0
 
-        except FileNotFoundError:
-            print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera.")
+        grid_df = pd.DataFrame(grid_full, columns=nombres_modelo)
 
-    # Grficar puntos originales 
-    colores_orig = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0"]
-    clases = sorted(df["pred_orig"].unique())
-    for cls, color in zip(clases, colores_orig):
+        # Predecimos la clase para cada punto del mapa 2D
+        Z_labels = modelo.predict(grid_df)
+        
+        # Extendemos las clases por si el grid predice alguna clase que no está en el dataset origen
+        clases_grid = sorted(list(set(clases_all) | set(Z_labels)))
+        dict_clases = {cls: i for i, cls in enumerate(clases_grid)}
+        
+        Z_idx = np.array([dict_clases[val] for val in Z_labels]).reshape(xx.shape)
+        
+        cmap_bg = ListedColormap(colores_base[:len(clases_grid)])
+        
+        # Rellenar con colores tenues las áreas
+        plt.contourf(xx, yy, Z_idx, alpha=0.15, cmap=cmap_bg, levels=np.arange(len(clases_grid) + 1) - 0.5)
+
+    else:
+        clases_grid = clases_all
+
+    # Graficar puntos originales 
+    for cls in clases_all:
+        idx_color = clases_grid.index(cls) if cls in clases_grid else clases_all.index(cls)
+        color = colores_base[idx_color % len(colores_base)]
         mask = df["pred_orig"] == cls
         plt.scatter(orig_a[mask], orig_b[mask], color=color, s=40,
                     alpha=0.8, label=f"{cls}", zorder=3)
@@ -180,8 +232,9 @@ def plot_contraejemplos(df, nombres, score):
                                          lw=0.8, alpha=0.5))
 
     # Contraejemplos
-    colores_ce = ["#0D47A1", "#1B5E20", "#E65100", "#4A148C"] # Versiones oscuras de colores_orig
-    for cls, color_ce in zip(clases, colores_ce):
+    for cls in clases_all:
+        idx_color = clases_grid.index(cls) if cls in clases_grid else clases_all.index(cls)
+        color_ce = colores_osc[idx_color % len(colores_osc)]
         mask = df["pred_orig"] == cls
         if mask.any():
             plt.scatter(ce_a[mask], ce_b[mask], color=color_ce, marker="X", s=80, 

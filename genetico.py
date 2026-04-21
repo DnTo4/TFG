@@ -7,8 +7,8 @@ from svm import train_model as train_svm_model
 from mlp import train_model as train_mlp_model
 
 # RUTAS
-RUTA_DATASET_TRAIN = "iris.data"
-RUTA_DATASET_TEST  = "iris.data"
+RUTA_DATASET_TRAIN = "diabetes.csv"
+RUTA_DATASET_TEST  = "diabetes.csv"
 RUTA_MODELO  = "modelo.joblib"
 RUTA_SALIDA  = "contraejemplos.csv"
 
@@ -16,10 +16,10 @@ RUTA_SALIDA  = "contraejemplos.csv"
 TIPO_MODELO  = "mlp" # "svm", "mlp", "perceptron"
 
 # HIPERPARÁMETROS GA
-TAMANO_POBLACION = 500   # (Antes 300) Más población = mejor cobertura y diversidad en el espacio
-GENERACIONES     = 300   # (Antes 150) Más tiempo para refinar los puntos y acercarlos a la frontera
-TASA_MUTACION    = 0.25  # (Antes 0.2) Ligeramente superior para evitar estancamiento prematuro
-NUM_PARES        = 50    # (Antes 70) Menos pares requeridos aísla a que solo se seleccionen los de mayor calidad sin chocar con la distancia mínima
+TAMANO_POBLACION = 500   
+GENERACIONES     = 300   
+TASA_MUTACION    = 0.25  
+NUM_PARES        = 50    
 
 def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     modelos = {
@@ -35,27 +35,35 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     
     print(f"Precisión del modelo ({tipo_modelo}) en prueba: {acc:.2f}")
     
-    # Calcular límites
+    # Calcular límites estandarizados
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
     X_combined = pd.concat([X_train, X_test], axis=0)
-    limites = np.vstack([X_combined.min().values, X_combined.max().values]).T
+    scaler.fit(X_combined)
     
-    return modelo, limites, nombres
+    X_scaled = scaler.transform(X_combined)
+    limites_scaled = np.vstack([X_scaled.min(axis=0), X_scaled.max(axis=0)]).T
+    
+    return modelo, limites_scaled, nombres, scaler
 
-def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share):
-    # Divide los individuos en puntos originales y contraejemplos
-    puntos_a = poblacion[:, :d_caracteristicas]
-    puntos_b = poblacion[:, d_caracteristicas:]
+def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share, scaler):
+    # Divide los individuos usando el espacio estandarizado (para calcular bien las distancias)
+    puntos_a_scaled = poblacion[:, :d_caracteristicas]
+    puntos_b_scaled = poblacion[:, d_caracteristicas:]
     
-    # Convierte los puntos a DataFrames
-    df_a = pd.DataFrame(puntos_a, columns=nombres_caracteristicas)
-    df_b = pd.DataFrame(puntos_b, columns=nombres_caracteristicas)
+    # Desescala a valores originales temporalmente para que el modelo predictivo funcione bien
+    puntos_a_raw = scaler.inverse_transform(puntos_a_scaled)
+    puntos_b_raw = scaler.inverse_transform(puntos_b_scaled)
     
-    # Predice las clases
+    df_a = pd.DataFrame(puntos_a_raw, columns=nombres_caracteristicas)
+    df_b = pd.DataFrame(puntos_b_raw, columns=nombres_caracteristicas)
+    
+    # Predice las clases usando valores reales
     clases_a = modelo.predict(df_a)
     clases_b = modelo.predict(df_b)
     
-    # Calcula la distancia euclidiana entre los puntos
-    distancias = np.linalg.norm(puntos_a - puntos_b, axis=1)
+    # Calcula la distancia euclidiana en el ENTORNO ESTANDARIZADO
+    distancias = np.linalg.norm(puntos_a_scaled - puntos_b_scaled, axis=1)
     
     # Penaliza los individuos que están en la misma clase
     misma_clase = (clases_a == clases_b)
@@ -143,7 +151,7 @@ def filtrar_contraejemplos(poblacion, aptitudes, n_pares=40, dist_minima=0.5):
                 
     return np.array(pares_seleccionados)
 
-def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacion=300, generaciones=150, tasa_mutacion=0.2, num_pares=40):
+def algoritmo_genetico(modelo, limites, nombres_caracteristicas, scaler, tamano_poblacion=300, generaciones=150, tasa_mutacion=0.2, num_pares=40):
     # Obtiene las dimensiones de cada punto
     d_caracteristicas = limites.shape[0]
 
@@ -163,7 +171,7 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacio
     print("\nIniciando algoritmo genético...\n")
     for gen in range(generaciones):
         # Evalúa la aptitud de cada individuo
-        aptitudes = evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share=1.0)
+        aptitudes = evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share=1.0, scaler=scaler)
         
         # Obtiene el índice del individuo con la mejor aptitud
         indice_min_aptitud = np.argmin(aptitudes)
@@ -201,19 +209,27 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, tamano_poblacio
         poblacion = np.array(nueva_poblacion[:tamano_poblacion])
         
     # Re-evaluar  
-    puntos_a = poblacion[:, :d_caracteristicas]
-    puntos_b = poblacion[:, d_caracteristicas:]
-    df_a = pd.DataFrame(puntos_a, columns=nombres_caracteristicas)
-    df_b = pd.DataFrame(puntos_b, columns=nombres_caracteristicas)
+    puntos_a_scaled = poblacion[:, :d_caracteristicas]
+    puntos_b_scaled = poblacion[:, d_caracteristicas:]
+    df_a = pd.DataFrame(scaler.inverse_transform(puntos_a_scaled), columns=nombres_caracteristicas)
+    df_b = pd.DataFrame(scaler.inverse_transform(puntos_b_scaled), columns=nombres_caracteristicas)
     clases_a = modelo.predict(df_a)
     clases_b = modelo.predict(df_b)
-    aptitudes_finales = np.linalg.norm(puntos_a - puntos_b, axis=1)
+    
+    aptitudes_finales = np.linalg.norm(puntos_a_scaled - puntos_b_scaled, axis=1)
     aptitudes_finales[clases_a == clases_b] += 999999.0
     
-    # Extraer n_pares diversos
-    pares = filtrar_contraejemplos(poblacion, aptitudes_finales, n_pares=num_pares, dist_minima=dist_minima_salida)
+    # Extraer n_pares diversos en el espacio estandarizado
+    pares_scaled = filtrar_contraejemplos(poblacion, aptitudes_finales, n_pares=num_pares, dist_minima=dist_minima_salida)
     
-    return pares, historial_mejores
+    # Devolver los pares desescalados a sus valores reales originales para exportar correctamente
+    pares_raw = []
+    for par in pares_scaled:
+        p_a = scaler.inverse_transform([par[:d_caracteristicas]])[0]
+        p_b = scaler.inverse_transform([par[d_caracteristicas:]])[0]
+        pares_raw.append(np.concatenate([p_a, p_b]))
+    
+    return np.array(pares_raw), historial_mejores
 
 def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="contraejemplos.csv"):
     d_dimension = len(nombres_caracteristicas)
@@ -247,7 +263,7 @@ def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="con
 
 if __name__ == "__main__":
     
-    modelo_entrenado, limites_datos, nombres_dim = entrenar_clasificador(RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO)
+    modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO)
     
     joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
     
@@ -256,6 +272,7 @@ if __name__ == "__main__":
         modelo=modelo_entrenado, 
         limites=limites_datos,
         nombres_caracteristicas=nombres_dim,
+        scaler=scaler_genetico,
         tamano_poblacion=TAMANO_POBLACION, 
         generaciones=GENERACIONES,
         tasa_mutacion=TASA_MUTACION,
