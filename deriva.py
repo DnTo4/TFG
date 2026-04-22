@@ -22,10 +22,6 @@ def cargar_datos(ruta):
     return X, y
 
 def entrenar_modelo(X, y):
-    """
-    Entrena y devuelve el modelo original completo embebido en 
-    una tubería estandarizada.
-    """
     scaler = StandardScaler()
     clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=2000, random_state=42)
     modelo = make_pipeline(scaler, clf)
@@ -33,10 +29,6 @@ def entrenar_modelo(X, y):
     return modelo
 
 def anclar_frontera_biseccion(modelo, X, y, num_puntos=50):
-    """
-    Genera N puntos hiper-dimensionales exáctamente encima de la frontera original.
-    Soporta datasets multiclase (iris) usando bisección basada en la clase predicha discreta.
-    """
     cols = X.columns
     anclajes = []
     np.random.seed(42)
@@ -71,20 +63,10 @@ def anclar_frontera_biseccion(modelo, X, y, num_puntos=50):
     return np.array(anclajes)
 
 def calcular_lejania_datos(modelo, X):
-    """
-    En N-dimensiones multi-clase, la confianza pura (max predict_proba) equivale a cuán
-    lejos o seguro está el punto. Una probabilidad de 1.0 es lejanía máxima; 
-    probabilidades bajas implican que está rozando alguna frontera.
-    """
     probas = modelo.predict_proba(X)
     return np.max(probas, axis=1)
 
 def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
-    """
-    Simula esferas crecientes "tipo ultrasonido" (Growing spheres nativo) radiando desde cada 
-    antiguo anclaje en N dimensiones, hasta que intercepta un cambio de polaridad de clase en la 
-    topología alterada de este nuevo modelo.
-    """
     d_dims = len(cols)
     distancias = []
     
@@ -98,7 +80,7 @@ def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
         encontrado = False
         r = 0.01
         
-        # Expansión radial isotrópica (Hyperesfera)
+        # Expansión radial isotrópica
         while r <= radio_max:
             # Vectors aleatorios mapeados a norm=1 unitaria multivariada
             v = np.random.normal(size=(nPts_esfera, d_dims))
@@ -134,7 +116,7 @@ def main():
         print("Fatal: No se lograron converger puntos tangenciales entre clases.")
         return
 
-    lejanías_orig = calcular_lejania_datos(modelo_base, X)
+    lejanias_orig = calcular_lejania_datos(modelo_base, X)
     
     porcentajes_corte = [0, 10, 20, 30, 40, 50, 60, 70, 80]
     registro_deriva = []
@@ -147,10 +129,10 @@ def main():
             continue
             
         # Nos disponemos a eliminar el P% de datos más lejanos/seguros
-        umbral_corte = np.percentile(lejanías_orig, 100 - P) 
+        umbral_corte = np.percentile(lejanias_orig, 100 - P) 
         
         # Nos quedamos con los datos cercanos a la frontera original
-        mascara_supervivientes = lejanías_orig <= umbral_corte
+        mascara_supervivientes = lejanias_orig <= umbral_corte
         
         X_vivo = X[mascara_supervivientes]
         y_vivo = y[mascara_supervivientes]
