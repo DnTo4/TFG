@@ -8,9 +8,19 @@ from sklearn.preprocessing import StandardScaler
 RUTA_DATASET = "iris.data"
 
 def cargar_datos(ruta):
+    """
+    Carga un conjunto de datos desde un CSV, codifica etiquetas y maneja variables categóricas.
+
+    Args:
+        ruta (str): Ruta del archivo de datos.
+
+    Returns:
+        tuple: (X, y) donde "X" son las características (DataFrame) e "y" las etiquetas (array).
+    """
     df = pd.read_csv(ruta)
     y_raw = df[df.columns[-1]]
     
+    # Codificación de etiquetas si son texto
     if y_raw.dtype == object:
         from sklearn.preprocessing import LabelEncoder
         y = LabelEncoder().fit_transform(y_raw)
@@ -18,17 +28,42 @@ def cargar_datos(ruta):
         y = y_raw.astype(int)
         
     X = df.drop(columns=[df.columns[-1]])
-    X = pd.get_dummies(X) # Por si hay características categóricas
+    X = pd.get_dummies(X) # One-hot encoding para variables categóricas
     return X, y
 
 def entrenar_modelo(X, y):
+    """
+    Crea un pipeline que escala los datos y entrena un modelo.
+
+    Args:
+        X (DataFrame): Datos de entrenamiento.
+        y (array): Etiquetas de clase.
+
+    Returns:
+        sklearn.pipeline.Pipeline: Modelo entrenado y escalado.
+    """
     scaler = StandardScaler()
     clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=2000, random_state=42)
     modelo = make_pipeline(scaler, clf)
     modelo.fit(X, y)
     return modelo
 
-def anclar_frontera_biseccion(modelo, X, y, num_puntos=50):
+def frontera_biseccion(modelo, X, y, num_puntos=50):
+    """
+    Encuentra puntos exactos sobre la frontera de decisión usando el método de bisección.
+    
+    Toma dos puntos aleatorios de clases distintas y busca el punto medio exacto donde 
+    la predicción cambia.
+
+    Args:
+        modelo: Clasificador entrenado.
+        X (DataFrame): Datos originales para muestreo.
+        y (array): Etiquetas originales.
+        num_puntos (int): Cantidad de puntos de anclaje a encontrar.
+
+    Returns:
+        np.ndarray: Coordenadas de los puntos localizados en la frontera.
+    """
     cols = X.columns
     anclajes = []
     np.random.seed(42)
@@ -44,11 +79,11 @@ def anclar_frontera_biseccion(modelo, X, y, num_puntos=50):
         c0 = modelo.predict(pd.DataFrame([p0], columns=cols))[0]
         c1 = modelo.predict(pd.DataFrame([p1], columns=cols))[0]
         
-        # Ignorar si ambas muestran la misma clase
+        # Solo buscamos la frontera entre clases diferentes
         if c0 == c1:
             continue
             
-        # Bisección de alta precisión geométrica (15 pasos)
+        # Refinamiento mediante bisección (15 iteraciones para alta precisión)
         for _ in range(15):
             pm = (p0 + p1) / 2.0
             cm = modelo.predict(pd.DataFrame([pm], columns=cols))[0]
@@ -62,33 +97,53 @@ def anclar_frontera_biseccion(modelo, X, y, num_puntos=50):
         
     return np.array(anclajes)
 
-def calcular_lejania_datos(modelo, X):
+def lejania_datos(modelo, X):
+    """
+    Calcula el nivel de 'confianza' del modelo para cada punto.
+    
+    Un valor alto indica que el punto está lejos de la frontera,
+    mientras que un valor cercano a 1/n_clases indica cercanía a la frontera.
+
+    Returns:
+        np.ndarray: Probabilidad máxima asignada a cada instancia.
+    """
     probas = modelo.predict_proba(X)
     return np.max(probas, axis=1)
 
 def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
+    """
+    Mide cuánto se ha desplazado la frontera del 'modelo_nuevo' respecto a los 
+    puntos originales mediante una expansión radial.
+
+    Args:
+        anclajes_b0 (np.ndarray): Puntos que estaban en la frontera original.
+        modelo_nuevo: El modelo reentrenado.
+        cols: Nombres de las columnas de X.
+
+    Returns:
+        float: Distancia media de desplazamiento.
+    """
     d_dims = len(cols)
     distancias = []
-    
-    # Tolerancia/Salto geodésico
     paso_radio = 0.05
     radio_max  = 5.0 
-    nPts_esfera = 300
+    nPts_esfera = 300 # Densidad de muestreo en la superficie de la esfera
     
     for b in anclajes_b0:
         clase_original = modelo_nuevo.predict(pd.DataFrame([b], columns=cols))[0]
         encontrado = False
         r = 0.01
         
-        # Expansión radial isotrópica
+        # Expandir un radio de búsqueda desde el punto de anclaje
         while r <= radio_max:
-            # Vectors aleatorios mapeados a norm=1 unitaria multivariada
+            # Generar vectores unitarios aleatorios en d-dimensiones
             v = np.random.normal(size=(nPts_esfera, d_dims))
             v /= (np.linalg.norm(v, axis=1, keepdims=True) + 1e-12)
             pts = b + (v * r)
             
             clases_barrido = modelo_nuevo.predict(pd.DataFrame(pts, columns=cols))
             
+            # Si algún punto de la esfera cambia de clase, es de la nueva frontera
             if np.any(clases_barrido != clase_original):
                 distancias.append(r)
                 encontrado = True
@@ -96,12 +151,15 @@ def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
             r += paso_radio
             
         if not encontrado:
-            distancias.append(radio_max) # Si la frontera fue engullida dramáticamente
+            distancias.append(radio_max) 
             
     return np.mean(distancias)
 
 def main():
-
+    """
+    Flujo principal: carga datos, entrena un modelo base, elimina puntos
+    periféricos de forma iterativa y mide la deriva de la frontera.
+    """
     try:
         X, y = cargar_datos(RUTA_DATASET)
         print(f"\nDataset '{RUTA_DATASET}' procesado -> [{X.shape[0]} instancias, {X.shape[1]} variables.]")
@@ -109,58 +167,55 @@ def main():
         print(f"Error cargando los datos: {e}")
         return
 
+    # Establecer el estado inicial
     modelo_base = entrenar_modelo(X, y)
+    B_0 = frontera_biseccion(modelo_base, X, y, num_puntos=50)
     
-    B_0 = anclar_frontera_biseccion(modelo_base, X, y, num_puntos=50)
     if len(B_0) == 0:
         print("Fatal: No se lograron converger puntos tangenciales entre clases.")
         return
 
-    lejanias_orig = calcular_lejania_datos(modelo_base, X)
-    
+    lejanias_orig = lejania_datos(modelo_base, X)
     porcentajes_corte = [0, 10, 20, 30, 40, 50, 60, 70, 80]
     registro_deriva = []
     
+    # Eliminar puntos lejanos y observar el cambio
     for P in porcentajes_corte:
-        if P == 0: # Control baseline (si nos comparamos contra el mismo modelo es casi 0 teórico)
+        if P == 0:
             deriva = 0.0
             registro_deriva.append(deriva)
             print(f" -> Puntos eliminados: {P:2d}% | Desplazamiento de frontera: {deriva:.4f}")
             continue
             
-        # Nos disponemos a eliminar el P% de datos más lejanos/seguros
+        # Identificar el umbral para eliminar el P% de datos
         umbral_corte = np.percentile(lejanias_orig, 100 - P) 
-        
-        # Nos quedamos con los datos cercanos a la frontera original
         mascara_supervivientes = lejanias_orig <= umbral_corte
         
         X_vivo = X[mascara_supervivientes]
         y_vivo = y[mascara_supervivientes]
         
-        # Reentrenamos el modelo con menos datos
-        modelo_ablado = entrenar_modelo(X_vivo, y_vivo)
+        # Reentrenar con el dataset reducido
+        modelo_cortado = entrenar_modelo(X_vivo, y_vivo)
         
-        # Exploración de cuánto huyó el hiperplano localmente
-        deriva_media = cuantificar_deriva_espacial(B_0, modelo_ablado, X.columns)
+        # Medir cuánto se movió el borde respecto a B_0
+        deriva_media = cuantificar_deriva_espacial(B_0, modelo_cortado, X.columns)
         registro_deriva.append(deriva_media)
         
         print(f" -> Puntos eliminados: {P:2d}% | Desplazamiento de frontera: {deriva_media:.4f}")
 
+    # Visualización de resultados
     plt.figure(figsize=(8, 5))
-    plt.plot(porcentajes_corte, registro_deriva, marker='o', markersize=7, linewidth=2.5, color='#4CAF50')
-    
+    plt.plot(porcentajes_corte, registro_deriva, marker='o', color='#4CAF50', linewidth=2.5)
     plt.fill_between(porcentajes_corte, registro_deriva, color='#4CAF50', alpha=0.15)
-    plt.grid(color='#E0E0E0', linestyle='--', linewidth=1)
+    plt.grid(color='#E0E0E0', linestyle='--')
     
-    plt.title("Desplazamiento de la Frontera de Decisión", pad=15, fontweight='bold', color='#333333')
-    plt.xlabel("Porcentaje de Puntos Eliminados (%)", labelpad=10, weight='semibold')
-    plt.ylabel("Distancia de Desplazamiento Media", labelpad=10, weight='semibold')
+    plt.title("Análisis de Deriva Espacial de la Frontera", fontweight='bold')
+    plt.xlabel("Porcentaje de Puntos Lejanos Eliminados (%)")
+    plt.ylabel("Distancia de Desplazamiento Media")
     
     plt.xlim(-2, 85)
     plt.ylim(bottom=0.0)
     plt.tight_layout()
-    plt.savefig("deriva_analisis.png", dpi=250)
-    print("Archivo guardado como 'deriva_analisis.png'.")
     plt.show()
 
 if __name__ == "__main__":
