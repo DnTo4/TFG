@@ -6,27 +6,42 @@ from perceptron import train_model as train_pt_model
 from svm import train_model as train_svm_model
 from mlp import train_model as train_mlp_model
 
-# RUTAS
+# --- RUTAS DE ARCHIVOS ---
 RUTA_DATASET_TRAIN = "diabetes.csv"
 RUTA_DATASET_TEST  = "diabetes.csv"
 RUTA_MODELO  = "modelo.joblib"
 RUTA_SALIDA  = "contraejemplos.csv"
 
-# MODELO
-TIPO_MODELO  = "mlp" # "svm", "mlp", "perceptron"
+# --- CONFIGURACIÓN DEL MODELO ---
+TIPO_MODELO  = "mlp" # Opciones: "svm", "mlp", "perceptron"
 
-# HIPERPARÁMETROS GA
+# --- HIPERPARÁMETROS DEL ALGORITMO GENÉTICO  ---
 TAMANO_POBLACION = 500   
 GENERACIONES     = 300   
 TASA_MUTACION    = 0.25  
 NUM_PARES        = 50    
 
 def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
+    """
+    Carga los datos, entrena el modelo seleccionado y calcula los límites de búsqueda.
+
+    Args:
+        ruta_train (str): Ruta al archivo de entrenamiento.
+        ruta_test (str): Ruta al archivo de prueba.
+        tipo_modelo (str): Identificador del modelo ('perceptron', 'svm', 'mlp').
+
+    Returns:
+        tuple: (modelo entrenado, limites_escalados, nombres_columnas, objeto_scaler)
+    
+    Raises:
+        ValueError: Si el tipo_modelo no está en el diccionario de modelos soportados.
+    """
     modelos = {
         "perceptron": train_pt_model,
         "svm": train_svm_model,
         "mlp": train_mlp_model
     }
+    
     if tipo_modelo not in modelos:
         raise ValueError(f"Modelo '{tipo_modelo}' no soportado.")
         
@@ -47,30 +62,47 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     return modelo, limites_scaled, nombres, scaler
 
 def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share, scaler):
-    # Divide los individuos usando el espacio estandarizado (para calcular bien las distancias)
+    """
+    Calcula el fitness de cada individuo basándose en la distancia y el cambio de clase.
+
+    El fitness es mejor (menor) si los dos puntos del individuo pertenecen a clases diferentes
+    y la distancia entre ellos es mínima. Se aplica una penalización por 'Fitness Sharing'
+    para evitar que todos los individuos converjan a la misma frontera.
+
+    Args:
+        poblacion (np.ndarray): Matriz de individuos (puntos A y B concatenados).
+        modelo: El modelo de clasificación entrenado.
+        d_caracteristicas (int): Número de dimensiones de un solo punto.
+        nombres_caracteristicas (list): Lista con los nombres de las columnas.
+        sigma_share (float): Radio de influencia para el fitness sharing.
+        scaler (StandardScaler): Escalador para transformar datos a valores reales.
+
+    Returns:
+        np.ndarray: Array con los valores de aptitud (fitness) de la población.
+    """
+    # Divide los individuos usando el espacio estandarizado
     puntos_a_scaled = poblacion[:, :d_caracteristicas]
     puntos_b_scaled = poblacion[:, d_caracteristicas:]
     
-    # Desescala a valores originales temporalmente para que el modelo predictivo funcione bien
+    # Desescala a valores originales para que el modelo funcione bien
     puntos_a_raw = scaler.inverse_transform(puntos_a_scaled)
     puntos_b_raw = scaler.inverse_transform(puntos_b_scaled)
     
     df_a = pd.DataFrame(puntos_a_raw, columns=nombres_caracteristicas)
-    df_b = pd.DataFrame(puntos_b_raw, columns=nombres_caracteristicas)
+    uint_b = pd.DataFrame(puntos_b_raw, columns=nombres_caracteristicas)
     
     # Predice las clases usando valores reales
     clases_a = modelo.predict(df_a)
-    clases_b = modelo.predict(df_b)
+    clases_b = modelo.predict(uint_b)
     
-    # Calcula la distancia euclidiana en el ENTORNO ESTANDARIZADO
+    # Calcula la distancia euclidiana en el entorno estandarizado
     distancias = np.linalg.norm(puntos_a_scaled - puntos_b_scaled, axis=1)
     
     # Penaliza los individuos que están en la misma clase
     misma_clase = (clases_a == clases_b)
     distancias[misma_clase] += 999999.0
     
-
-    # Contamos cuántos individuos están explorando cada frontera específica (Fitness sharing)
+    # Conteo de individuos en cada frontera específica (Fitness sharing)
     idx_validos = ~misma_clase
     
     # Identifica las transiciones de clase (0_1, 1_2, ...)
@@ -80,7 +112,7 @@ def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristi
         transiciones_validas = transiciones[idx_validos]
         unicas, conteos = np.unique(transiciones_validas, return_counts=True)
         
-        # Penalizar la distancia multiplicándola por la cantidad de clones en esa misma frontera.
+        # Penalizar la distancia multiplicándola por la cantidad de individuos en esa misma frontera.
         for trans, count in zip(unicas, conteos):
             mascara = (transiciones == trans) & idx_validos
             distancias[mascara] *= count
@@ -88,22 +120,67 @@ def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristi
     return distancias
 
 def inicializar_poblacion(tamano_poblacion, limites, d_caracteristicas):
+    """
+    Crea una población inicial aleatoria dentro de los límites definidos.
+
+    Args:
+        tamano_poblacion (int): Número de individuos a generar.
+        limites (np.ndarray): Límites min/max para cada característica.
+        d_caracteristicas (int): Número de dimensiones de un punto.
+
+    Returns:
+        np.ndarray: Matriz aleatoria de tamaño (tamano_poblacion, 2 * d_caracteristicas).
+    """
     limites_completos = np.vstack([limites, limites])
     poblacion = np.random.uniform(limites_completos[:, 0], limites_completos[:, 1], size=(tamano_poblacion, 2 * d_caracteristicas))
     return poblacion
 
 def seleccion_torneo(poblacion, aptitudes, k=3):
+    """
+    Selecciona al mejor individuo de un grupo aleatorio de tamaño k.
+
+    Args:
+        poblacion (np.ndarray): La población actual.
+        aptitudes (np.ndarray): Los valores de fitness de la población.
+        k (int): Número de participantes en el torneo.
+
+    Returns:
+        np.ndarray: El individuo ganador del torneo.
+    """
     indices_seleccion = np.random.randint(0, len(poblacion), size=k)
     mejor_indice = indices_seleccion[np.argmin(aptitudes[indices_seleccion])]
     return poblacion[mejor_indice]
 
 def cruce(padre1, padre2, alfa=0.5):
+    """
+    Realiza un cruce aritmético entre dos padres para generar dos hijos.
+
+    Args:
+        padre1 (np.ndarray): Primer progenitor.
+        padre2 (np.ndarray): Segundo progenitor.
+        alfa (float): Factor de ponderación aleatorio para la combinación lineal.
+
+    Returns:
+        tuple: (hijo1, hijo2)
+    """
     # Cruce aritmético (trazar una línea entre los padres y tomar puntos intermedios)
     hijo1 = alfa * padre1 + (1 - alfa) * padre2
     hijo2 = alfa * padre2 + (1 - alfa) * padre1
     return hijo1, hijo2
 
 def mutar(individuo, limites_completos, tasa_mutacion=0.1, sigma=0.1):
+    """
+    Aplica una mutación gaussiana a los genes del individuo.
+
+    Args:
+        individuo (np.ndarray): El individuo a mutar.
+        limites_completos (np.ndarray): Límites para asegurar que el gen no salga de rango.
+        tasa_mutacion (float): Probabilidad de que un gen específico mute.
+        sigma (float): Intensidad de la mutación (basada en el rango del gen).
+
+    Returns:
+        np.ndarray: El individuo mutado y ajustado a los límites.
+    """
     # Añadir ruido gaussiano 
     mutado = np.copy(individuo)
     for i in range(len(mutado)):
@@ -115,6 +192,18 @@ def mutar(individuo, limites_completos, tasa_mutacion=0.1, sigma=0.1):
     return mutado
 
 def filtrar_contraejemplos(poblacion, aptitudes, n_pares=40, dist_minima=0.5):
+    """
+    Selecciona los mejores individuos asegurando que sean diversos entre sí.
+
+    Args:
+        poblacion (np.ndarray): Población final obtenida por el AG.
+        aptitudes (np.ndarray): Fitness de dicha población.
+        n_pares (int): Número máximo de pares a retornar.
+        dist_minima (float): Distancia mínima requerida entre los puntos de origen de los pares.
+
+    Returns:
+        np.ndarray: Conjunto de individuos filtrados.
+    """
     # Elimina los individuos que están en la misma clase
     indices_validos = np.where(aptitudes < 900000)[0]
     if len(indices_validos) == 0:
@@ -152,6 +241,22 @@ def filtrar_contraejemplos(poblacion, aptitudes, n_pares=40, dist_minima=0.5):
     return np.array(pares_seleccionados)
 
 def algoritmo_genetico(modelo, limites, nombres_caracteristicas, scaler, tamano_poblacion=300, generaciones=150, tasa_mutacion=0.2, num_pares=40):
+    """
+    Ejecuta el ciclo evolutivo completo para encontrar contraejemplos óptimos.
+
+    Args:
+        modelo: El clasificador entrenado.
+        limites (np.ndarray): Límites estandarizados del dataset.
+        nombres_caracteristicas (list): Nombres de las columnas de los datos.
+        scaler (StandardScaler): El objeto para revertir la estandarización.
+        tamano_poblacion (int): Tamaño de la población en cada generación.
+        generaciones (int): Número de iteraciones del algoritmo.
+        tasa_mutacion (float): Probabilidad de mutación por gen.
+        num_pares (int): Cantidad de resultados deseados.
+
+    Returns:
+        tuple: (pares_raw desescalados, historial_mejores_fitness)
+    """
     # Obtiene las dimensiones de cada punto
     d_caracteristicas = limites.shape[0]
 
@@ -232,6 +337,15 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, scaler, tamano_
     return np.array(pares_raw), historial_mejores
 
 def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="contraejemplos.csv"):
+    """
+    Genera un informe detallado en CSV con los puntos originales, contraejemplos y métricas.
+
+    Args:
+        pares (np.ndarray): Matriz de pares encontrados en valores reales.
+        modelo: El clasificador para verificar predicciones finales.
+        nombres_caracteristicas (list): Nombres de las columnas del dataset.
+        archivo_csv (str): Nombre del archivo donde se guardarán los resultados.
+    """
     d_dimension = len(nombres_caracteristicas)
     filas = []
     
@@ -262,12 +376,15 @@ def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="con
     print(f"\nExportados {len(pares)} pares a '{archivo_csv}'")
 
 if __name__ == "__main__":
+    # Entrenamiento y preparación
+    modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(
+        RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO
+    )
     
-    modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO)
-    
+    # Persistencia del modelo
     joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
     
-    # Ejecutar el algoritmo genético con los hiperparámetros globales
+    # Ejecución del Algoritmo Genético
     pares_finales, historial = algoritmo_genetico(
         modelo=modelo_entrenado, 
         limites=limites_datos,
@@ -279,6 +396,7 @@ if __name__ == "__main__":
         num_pares=NUM_PARES
     )
     
+    # Exportación de resultados finales
     if len(pares_finales) > 0:
         exportar_resultados(pares_finales, modelo_entrenado, nombres_dim, RUTA_SALIDA)
     else:
