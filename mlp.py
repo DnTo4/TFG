@@ -141,4 +141,4 @@ if __name__ == "__main__":
     
     # Exportar el modelo en formato joblib
     joblib.dump({"modelo": modelo, "nombres": nombres}, OUTPUT_MODEL)
-    print(f"Modelo exportado exitosamente a '{OUTPUT_MODEL}'. Analizable con analisis.py.")
+    print(f"Modelo exportado a '{OUTPUT_MODEL}'.")
