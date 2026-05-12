@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.spatial.distance import cdist
 
 # Ruta del dataset
-RUTA_DATASET = "iris.data"
+RUTA_DATASET = "datos/originales/iris.data"
 
 def buscar_minima_distancia_dataset(ruta):
     """
@@ -72,7 +72,7 @@ def buscar_minima_distancia_dataset(ruta):
     pd.DataFrame(
         [df.iloc[idx_a], df.iloc[idx_b]], 
         index=["Ejemplo_A", "Ejemplo_B"]
-    ).to_csv("par_minimo.csv")
+    ).to_csv("datos/procesados/par_minimo.csv")
     print("Se ha generado el archivo 'par_minimo.csv'.\n")
 
 if __name__ == "__main__":

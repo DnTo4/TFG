@@ -2,15 +2,15 @@ import numpy as np
 import pandas as pd
 import joblib
 
-from perceptron import train_model as train_pt_model
-from svm import train_model as train_svm_model
-from mlp import train_model as train_mlp_model
+from src.modelos.perceptron import train_model as train_pt_model
+from src.modelos.svm import train_model as train_svm_model
+from src.modelos.mlp import train_model as train_mlp_model
 
 # --- RUTAS DE ARCHIVOS ---
-RUTA_DATASET_TRAIN = "diabetes.csv"
-RUTA_DATASET_TEST  = "diabetes.csv"
-RUTA_MODELO  = "modelo.joblib"
-RUTA_SALIDA  = "contraejemplos.csv"
+RUTA_DATASET_TRAIN = "datos/originales/diabetes.csv"
+RUTA_DATASET_TEST  = "datos/originales/diabetes.csv"
+RUTA_MODELO  = "modelos/modelo.joblib"
+RUTA_SALIDA  = "datos/procesados/contraejemplos.csv"
 
 # --- CONFIGURACIÓN DEL MODELO ---
 TIPO_MODELO  = "mlp" # Opciones: "svm", "mlp", "perceptron"
@@ -336,7 +336,7 @@ def algoritmo_genetico(modelo, limites, nombres_caracteristicas, scaler, tamano_
     
     return np.array(pares_raw), historial_mejores
 
-def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="contraejemplos.csv"):
+def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="datos/procesados/contraejemplos.csv"):
     """
     Genera un informe detallado en CSV con los puntos originales, contraejemplos y métricas.
 

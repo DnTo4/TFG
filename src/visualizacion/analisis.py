@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import joblib
 
 # Configuración global
-CSV_PATH   = "contraejemplos_memeticos.csv"
-MODEL_PATH = "modelo.joblib" 
+CSV_PATH   = "datos/procesados/contraejemplos_memeticos.csv"
+MODEL_PATH = "modelos/modelo.joblib" 
 FRONTERA   = True    # Visualizar frontera de decisión (requiere modelo)
 FLECHAS    = False   # Visualizar flechas origen -> contraejemplo
 USAR_SHAP  = False   # Priorizar importancia global (SHAP) vs empírica (movimiento)
@@ -96,7 +96,7 @@ def analizar_csv(path):
 
     plot_contraejemplos(df, nombres, score)
 
-def plot_contraejemplos(df, nombres=None, score=None):
+def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
     """
     Genera una visualización 2D de los puntos originales vs. contraejemplos.
     
@@ -121,9 +121,9 @@ def plot_contraejemplos(df, nombres=None, score=None):
     except FileNotFoundError:
         print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera y SHAP.")
 
-    var_a, var_b = None, None
+    var_a, var_b = var_x, var_y
 
-    # Lógica de selección de variables para los ejes
+    # Lógica de selección de variables para los ejes (si no se pasaron explícitamente)
     if USAR_SHAP and modelo is not None and nombres_modelo is not None:
         try:
             import shap

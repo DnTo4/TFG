@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import joblib
 
-from genetico import entrenar_clasificador, algoritmo_genetico, exportar_resultados
-from growing_spheres import growing_spheres_generacion, feature_selection
+from src.contraejemplos.genetico import entrenar_clasificador, algoritmo_genetico, exportar_resultados
+from src.contraejemplos.growing_spheres import growing_spheres_generacion, feature_selection
 
 # ---- PARÁMETROS DE CONFIGURACIÓN Y RUTAS ----
-RUTA_DATASET_TRAIN = "diabetes.csv"
-RUTA_DATASET_TEST  = "diabetes.csv"
-RUTA_MODELO  = "modelo.joblib"
-RUTA_SALIDA  = "contraejemplos_memeticos.csv"
+RUTA_DATASET_TRAIN = "datos/originales/diabetes.csv"
+RUTA_DATASET_TEST  = "datos/originales/diabetes.csv"
+RUTA_MODELO  = "modelos/modelo.joblib"
+RUTA_SALIDA  = "datos/procesados/contraejemplos_memeticos.csv"
 
 TIPO_MODELO = "mlp" # Opciones: "svm", "mlp", "perceptron"
 

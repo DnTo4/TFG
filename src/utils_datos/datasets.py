@@ -111,11 +111,11 @@ def crear_lineal_2d(nombre_archivo, n_puntos=200, seed=42):
 
 if __name__ == "__main__":
     # Generar círculos concéntricos (train y test)
-    crear_dataset_no_lineal("train_nolineal.csv", n_puntos=150, seed=42)
-    crear_dataset_no_lineal("test_nolineal.csv", n_puntos=50, seed=123)
+    crear_dataset_no_lineal("datos/originales/train_nolineal.csv", n_puntos=150, seed=42)
+    crear_dataset_no_lineal("datos/originales/test_nolineal.csv", n_puntos=50, seed=123)
 
     # Generar lunas
-    crear_moons("train_moons.csv", n_puntos=200, seed=42)
+    crear_moons("datos/originales/train_moons.csv", n_puntos=200, seed=42)
     
     # Generar lineal
-    crear_lineal_2d("train_lineal.csv", n_puntos=200, seed=42)
+    crear_lineal_2d("datos/originales/train_lineal.csv", n_puntos=200, seed=42)

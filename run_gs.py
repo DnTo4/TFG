@@ -3,10 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import joblib
 
-from perceptron import train_model as train_pt_model
-from svm import train_model as train_svm_model
-from mlp import train_model as train_mlp_model
-from growing_spheres import growing_spheres_generacion, feature_selection
+from src.modelos.perceptron import train_model as train_pt_model
+from src.modelos.svm import train_model as train_svm_model
+from src.modelos.mlp import train_model as train_mlp_model
+from src.contraejemplos.growing_spheres import growing_spheres_generacion, feature_selection
 
 # ---- PARÁMETROS DE CONFIGURACIÓN ----
 MODELO = "mlp"        # Tipo de clasificador: "perceptron", "svm" o "mlp"
@@ -19,14 +19,14 @@ MAX_ITERS = 50        # Límite de iteraciones para encontrar un contraejemplo
 UMBRAL = 1e-3         # Distancia mínima para considerar un contraejemplo como "nuevo"
 RANDOM_STATE = 42     # Semilla global para reproducibilidad
 
-TRAIN = "iris.data"   # Ruta del dataset de entrenamiento
-TEST  = "iris.data"   # Ruta del dataset de prueba
+TRAIN = "datos/originales/iris.data"   # Ruta del dataset de entrenamiento
+TEST  = "datos/originales/iris.data"   # Ruta del dataset de prueba
 TARGET  = None        # Nombre de la columna objetivo (None usa la última)
 
 FS = True             # Activar feature selection
 GUARDAR_CSV = True    # Habilitar la exportación de resultados a un archivo
-CSV_PATH   = "contraejemplos.csv"
-MODEL_PATH = "modelo.joblib"
+CSV_PATH   = "datos/procesados/contraejemplos.csv"
+MODEL_PATH = "modelos/modelo.joblib"
 # -------------------------------------
 
 def nuevo(x, cEjs, umbral):

@@ -40,7 +40,7 @@ def parse_df(df, target_col):
         # Intentar determinar la clase del contraejemplo usando el modelo original
         try:
             import joblib
-            bundle = joblib.load("modelo.joblib")
+            bundle = joblib.load("modelos/modelo.joblib")
             modelo_oraculo = bundle["modelo"]
             y_ce = pd.Series(modelo_oraculo.predict(X_ce))
         except Exception as e:
@@ -129,10 +129,10 @@ if __name__ == "__main__":
     import joblib
     
     # --- Configuración de ejecución ---
-    TRAIN_PATH = "contraejemplos.csv"
-    TEST_PATH = "contraejemplos.csv"
+    TRAIN_PATH = "datos/procesados/contraejemplos.csv"
+    TEST_PATH = "datos/procesados/contraejemplos.csv"
     TARGET_COLUMN = None  # Ajustar según el dataset
-    OUTPUT_MODEL = "modelo.joblib"
+    OUTPUT_MODEL = "modelos/modelo.joblib"
     
     print(f"Entrenando Perceptron con datos de '{TRAIN_PATH}'...")
     modelo, (X_train, y_train, X_test, y_test), acc, nombres = train_model(
