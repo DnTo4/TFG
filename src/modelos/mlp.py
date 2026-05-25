@@ -25,7 +25,7 @@ def parse_df(df, target_col):
         orig_cols = [c for c in df.columns if not c.startswith("ce_") and 
                      not c.startswith("delta_") and 
                      not c.startswith("changed_") and 
-                     c not in ["pred_orig", "dist_l2", "num_features_changed"]]
+                     c not in ["pred_orig", "dist_l2", "num_features_changed", "mse_reconstruccion"]]
         
         # Extraer puntos originales y sus etiquetas predichas por el modelo
         X_orig = df[orig_cols]

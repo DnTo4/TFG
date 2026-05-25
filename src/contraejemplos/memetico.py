@@ -11,7 +11,7 @@ RUTA_DATASET_TEST  = "datos/originales/diabetes.csv"
 RUTA_MODELO  = "modelos/modelo.joblib"
 RUTA_SALIDA  = "datos/procesados/contraejemplos_memeticos.csv"
 
-TIPO_MODELO = "mlp" # Opciones: "svm", "mlp", "perceptron"
+TIPO_MODELO = "mlp" # Opciones: "svm", "mlp", "arbol_decision"
 
 # ---- HIPERPARÁMETROS AG ----
 TAMANO_POBLACION_GA = 100
@@ -40,6 +40,8 @@ def main():
     print("  ALGORITMO MEMETICO: AG + GS  ")
     print("=====================================================\n")
     
+    from src.utils.hiperparametros import obtener_hiperparametros
+
     # Entrenamientodel modelo
     print("Entrenando modelo...")
     modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(
@@ -50,16 +52,19 @@ def main():
     joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
     print(f"Modelo guardado en '{RUTA_MODELO}'.\n")
     
+    # Obtener hiperparámetros óptimos (combinados)
+    params_ga, params_gs = obtener_hiperparametros(RUTA_DATASET_TRAIN, TIPO_MODELO)
+    
     # Búsqueda global (AG)
-    print("--- Busqueda Global ---")
+    print(f"--- Busqueda Global con AG (Población={params_ga['tamano_poblacion']}, Gen={params_ga['generaciones']}, Mutación={params_ga['tasa_mutacion']}) ---")
     pares_ga, historial = algoritmo_genetico(
         modelo=modelo_entrenado, 
         limites=limites_datos,
         nombres_caracteristicas=nombres_dim,
         scaler=scaler_genetico,
-        tamano_poblacion=TAMANO_POBLACION_GA, 
-        generaciones=GENERACIONES_GA,
-        tasa_mutacion=TASA_MUTACION_GA,
+        tamano_poblacion=params_ga["tamano_poblacion"], 
+        generaciones=params_ga["generaciones"],
+        tasa_mutacion=params_ga["tasa_mutacion"],
         num_pares=NUM_PARES_GA
     )
     
@@ -71,7 +76,7 @@ def main():
     print(f"\nExploracion completada. Extraidos {len(pares_ga)} individuos semilla.")
     
     # 3. Búsqueda Local
-    print("\n--- Busqueda Local (Minimizando distancia con GS) ---")
+    print(f"\n--- Busqueda Local con GS (Muestras={params_gs['muestras']}, AB={params_gs['ancho_banda']}, Max Iters={params_gs['max_iters']}) ---")
     d_dim = len(nombres_dim)
     pares_memeticos = []
     
@@ -91,9 +96,9 @@ def main():
             ce_gs = growing_spheres_generacion(
                 predict_fn=predict_fn,
                 x=df_orig,
-                muestras=MUESTRAS_GS,
-                ancho_banda=ANCHO_BANDA_GS,
-                max_iters=MAX_ITERS_GS,
+                muestras=params_gs["muestras"],
+                ancho_banda=params_gs["ancho_banda"],
+                max_iters=params_gs["max_iters"],
                 random_state=42 + idx
             )
             

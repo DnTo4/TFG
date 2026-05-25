@@ -96,7 +96,7 @@ def analizar_csv(path):
 
     plot_contraejemplos(df, nombres, score)
 
-def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
+def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, modelo_entrenado=None, nombres_modelo_entrenado=None, ruta_dataset=None, ruta_guardar=None):
     """
     Genera una visualización 2D de los puntos originales vs. contraejemplos.
     
@@ -110,16 +110,17 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
         score (numpy.ndarray, opcional): Scores de importancia calculados en analizar_csv.
     """
     print("\nPreparando gráfico...")
-    modelo = None
-    nombres_modelo = None
+    modelo = modelo_entrenado
+    nombres_modelo = nombres_modelo_entrenado
 
-    # Carga del modelo y metadatos
-    try:
-        bundle         = joblib.load(MODEL_PATH)
-        modelo         = bundle["modelo"]
-        nombres_modelo = bundle["nombres"]
-    except FileNotFoundError:
-        print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera y SHAP.")
+    # Carga del modelo y metadatos si no se pasaron
+    if modelo is None or nombres_modelo is None:
+        try:
+            bundle         = joblib.load(MODEL_PATH)
+            modelo         = bundle["modelo"]
+            nombres_modelo = bundle["nombres"]
+        except FileNotFoundError:
+            print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera y SHAP.")
 
     var_a, var_b = var_x, var_y
 
@@ -162,12 +163,27 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
 
     plt.figure(figsize=(7, 6))
 
+    df_fondo = None
+    x_min_val, x_max_val = min(orig_a.min(), ce_a.min()), max(orig_a.max(), ce_a.max())
+    y_min_val, y_max_val = min(orig_b.min(), ce_b.min()), max(orig_b.max(), ce_b.max())
+    
+    if ruta_dataset is not None:
+        try:
+            df_fondo = pd.read_csv(ruta_dataset)
+            if var_a in df_fondo.columns and var_b in df_fondo.columns:
+                x_min_val = min(x_min_val, df_fondo[var_a].min())
+                x_max_val = max(x_max_val, df_fondo[var_a].max())
+                y_min_val = min(y_min_val, df_fondo[var_b].min())
+                y_max_val = max(y_max_val, df_fondo[var_b].max())
+        except Exception as e:
+            print(f"Aviso al cargar dataset de fondo para límites: {e}")
+
     # Renderizado de la Frontera de Decisión
     if FRONTERA and modelo is not None:
         from matplotlib.colors import ListedColormap
         pad = 0.8
-        x_min, x_max = min(orig_a.min(), ce_a.min()) - pad, max(orig_a.max(), ce_a.max()) + pad
-        y_min, y_max = min(orig_b.min(), ce_b.min()) - pad, max(orig_b.max(), ce_b.max()) + pad
+        x_min, x_max = x_min_val - pad, x_max_val + pad
+        y_min, y_max = y_min_val - pad, y_max_val + pad
 
         xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400), np.linspace(y_min, y_max, 400))
         
@@ -189,6 +205,19 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
                      levels=np.arange(len(clases_grid) + 1) - 0.5)
     else:
         clases_grid = clases_all
+
+    # Dibujar dataset original de fondo si se proporciona
+    if df_fondo is not None:
+        try:
+            target_col = df_fondo.columns[-1]
+            clases_fondo = sorted(df_fondo[target_col].unique())
+            for cls in clases_fondo:
+                idx_color = clases_grid.index(cls) if cls in clases_grid else list(clases_fondo).index(cls)
+                mask = df_fondo[target_col] == cls
+                plt.scatter(df_fondo[var_a][mask], df_fondo[var_b][mask],
+                            color=colores_base[idx_color % len(colores_base)], s=15, alpha=0.15, zorder=1)
+        except Exception as e:
+            print(f"No se pudo graficar el dataset de fondo: {e}")
 
     # Dibujar puntos originales
     for cls in clases_all:
@@ -212,7 +241,15 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None):
 
     plt.xlabel(var_a); plt.ylabel(var_b)
     plt.title(f"Originales vs Contraejemplos  —  '{var_a}' y '{var_b}'")
-    plt.legend(); plt.tight_layout(); plt.show()
+    plt.legend(); plt.tight_layout()
+    if ruta_guardar:
+        import os
+        directorio = os.path.dirname(ruta_guardar)
+        if directorio:
+            os.makedirs(directorio, exist_ok=True)
+        plt.savefig(ruta_guardar, dpi=150)
+        print(f"[+] Gráfico guardado en: {ruta_guardar}")
+    plt.show()
 
 if __name__ == "__main__":
     analizar_csv(CSV_PATH)

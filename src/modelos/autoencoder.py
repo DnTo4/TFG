@@ -101,7 +101,24 @@ def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_pat
         return None
         
     # Renombrar las columnas para que coincidan con las originales usadas en el fit del scaler
+    X_ce = X_ce.copy()
     X_ce.columns = [col.replace('ce_', '') for col in X_ce.columns]
+    
+    # Alinear columnas con las que el scaler fue entrenado
+    if hasattr(scaler, "feature_names_in_"):
+        scaler_features = list(scaler.feature_names_in_)
+        missing_cols = [c for c in scaler_features if c not in X_ce.columns]
+        unseen_cols = [c for c in X_ce.columns if c not in scaler_features]
+        
+        if missing_cols or unseen_cols:
+            raise ValueError(
+                f"Discrepancia de características detectada para el Autoencoder.\n"
+                f"El Scaler espera características: {scaler_features}\n"
+                f"Pero los contraejemplos proporcionan características: {list(X_ce.columns)}\n"
+                f"Asegúrese de estar utilizando el dataset original correcto (--dataset)."
+            )
+        # Reordenar columnas para que coincidan exactamente
+        X_ce = X_ce[scaler_features]
         
     # Estandarizar los contraejemplos
     X_ce_scaled = scaler.transform(X_ce)

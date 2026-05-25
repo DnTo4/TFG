@@ -1,10 +1,11 @@
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import Perceptron
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV
+import warnings
 
 def parse_df(df, target_col):
     """
@@ -27,7 +28,7 @@ def parse_df(df, target_col):
         orig_cols = [c for c in df.columns if not c.startswith("ce_") and 
                      not c.startswith("delta_") and 
                      not c.startswith("changed_") and 
-                     c not in ["pred_orig", "dist_l2", "num_features_changed"]]
+                     c not in ["pred_orig", "dist_l2", "num_features_changed", "mse_reconstruccion"]]
         
         # Separar datos originales
         X_orig = df[orig_cols]
@@ -94,7 +95,8 @@ def load_data(train_path, test_path, target_column=None):
 
 def train_model(train_path, test_path, target_column=None):
     """
-    Entrena un perceptrón utilizando un pipeline con escalado estándar.
+    Entrena un Árbol de Decisión utilizando un pipeline con escalado estándar y 
+    optimización de hiperparámetros mediante búsqueda en rejilla con validación cruzada.
 
     Args:
         train_path (str): Ruta al archivo de entrenamiento.
@@ -107,23 +109,49 @@ def train_model(train_path, test_path, target_column=None):
     # Cargar y preprocesar datos
     X_train, y_train, X_test, y_test = load_data(train_path, test_path, target_column)
 
-    # Crear pipeline: Escalado + modelo lineal
-    model = make_pipeline(
+    # Crear el pipeline base
+    pipeline = make_pipeline(
         StandardScaler(),
-        Perceptron(max_iter=1000, tol=1e-3, random_state=0)
+        DecisionTreeClassifier(random_state=42)
     )
 
-    # Fase de ajuste del modelo
-    model.fit(X_train, y_train)
+    # Definir rejilla de hiperparámetros a optimizar (rejilla amplia para permitir máxima capacidad adaptativa)
+    param_grid = {
+        'decisiontreeclassifier__max_depth': [3, 4, 5, 6, 8, 10, None],
+        'decisiontreeclassifier__min_samples_split': [2, 5, 10],
+        'decisiontreeclassifier__min_samples_leaf': [1, 2, 4, 8],
+        'decisiontreeclassifier__criterion': ['gini', 'entropy']
+    }
+
+    # Ajustar número de pliegues para validación cruzada según el tamaño del set de entrenamiento
+    cv_folds = min(5, len(X_train) // 2)
+    if cv_folds < 2:
+        cv_folds = 2
+
+    # Ejecutar Grid Search
+    grid_search = GridSearchCV(
+        pipeline,
+        param_grid=param_grid,
+        cv=cv_folds,
+        scoring='accuracy',
+        n_jobs=-1
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_
+    best_params = grid_search.best_params_
 
     # Evaluación de desempeño
-    y_pred = model.predict(X_test)
+    y_pred = best_model.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
     # Lista de nombres de características
     nombres = X_train.columns.tolist()
 
-    return model, (X_train, y_train, X_test, y_test), acc, nombres
+    return best_model, (X_train, y_train, X_test, y_test), acc, nombres
 
 if __name__ == "__main__":
     import joblib
@@ -134,14 +162,15 @@ if __name__ == "__main__":
     TARGET_COLUMN = None  # Ajustar según el dataset
     OUTPUT_MODEL = "modelos/modelo.joblib"
     
-    print(f"Entrenando Perceptron con datos de '{TRAIN_PATH}'...")
-    modelo, (X_train, y_train, X_test, y_test), acc, nombres = train_model(
-        TRAIN_PATH, TEST_PATH, target_column=TARGET_COLUMN
-    )
-    
-    print(f"Precision de test: {acc:.4f}")
-    
-    # Exportar el modelo en el formato estandarizado del proyecto
-    joblib.dump({"modelo": modelo, "nombres": nombres}, OUTPUT_MODEL)
-    print(f"Modelo exportado  a '{OUTPUT_MODEL}'")
-
+    try:
+        print(f"Entrenando Árbol de Decisión con datos de '{TRAIN_PATH}'...")
+        modelo, (X_train, y_train, X_test, y_test), acc, nombres = train_model(
+            TRAIN_PATH, TEST_PATH, target_column=TARGET_COLUMN
+        )
+        print(f"Precision de test: {acc:.4f}")
+        
+        # Exportar el modelo en el formato estandarizado del proyecto
+        joblib.dump({"modelo": modelo, "nombres": nombres}, OUTPUT_MODEL)
+        print(f"Modelo exportado a '{OUTPUT_MODEL}'")
+    except Exception as e:
+        print(f"No se pudo completar el test local: {e}")

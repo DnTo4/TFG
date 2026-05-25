@@ -4,3 +4,4 @@ matplotlib
 joblib
 scikit-learn
 scipy
+numpy

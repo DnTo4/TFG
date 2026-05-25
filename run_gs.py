@@ -3,13 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import joblib
 
-from src.modelos.perceptron import train_model as train_pt_model
+from src.modelos.arbol_decision import train_model as train_arbol_model
 from src.modelos.svm import train_model as train_svm_model
 from src.modelos.mlp import train_model as train_mlp_model
 from src.contraejemplos.growing_spheres import growing_spheres_generacion, feature_selection
 
 # ---- PARÁMETROS DE CONFIGURACIÓN ----
-MODELO = "mlp"        # Tipo de clasificador: "perceptron", "svm" o "mlp"
+MODELO = "mlp"        # Tipo de clasificador: "arbol_decision", "svm" o "mlp"
 
 N_INICIALES = 40      # Número de puntos de origen seleccionados del dataset
 SEEDS = 2             # Cantidad de semillas (intentos) por cada punto de inicio
@@ -47,7 +47,7 @@ def nuevo(x, cEjs, umbral):
     dist = np.linalg.norm(np.asarray(cEjs) - x, axis=1)
     return np.all(dist > umbral)
 
-def contraejemplos(modelo, entrada_df):
+def contraejemplos(modelo, entrada_df, muestras=MUESTRAS, ancho_banda=ANCHO_BANDA, max_iters=MAX_ITERS):
     """
     Coordina la generación masiva de contraejemplos para múltiples puntos de inicio.
 
@@ -77,9 +77,9 @@ def contraejemplos(modelo, entrada_df):
                 cEj = growing_spheres_generacion(
                     predict_fn=predict_fn,
                     x=x0,
-                    muestras=MUESTRAS,
-                    ancho_banda=ANCHO_BANDA,
-                    max_iters=MAX_ITERS,
+                    muestras=muestras,
+                    ancho_banda=ancho_banda,
+                    max_iters=max_iters,
                     random_state=int(s),
                 )
                 
@@ -155,7 +155,7 @@ def main():
     4. Exporta los resultados a CSV.
     """
     modelos = {
-        "perceptron": train_pt_model,
+        "arbol_decision": train_arbol_model,
         "svm": train_svm_model,
         "mlp": train_mlp_model
     }
@@ -176,8 +176,19 @@ def main():
     # Unión de datos
     entrada_df = pd.concat([X_train, X_test], axis=0)
 
+    # Obtener hiperparámetros óptimos
+    from src.utils.hiperparametros import obtener_hiperparametros
+    _, params_gs = obtener_hiperparametros(TRAIN, MODELO)
+
     # Ejecución de Growing Spheres
-    cEjs, starts, labels_orig = contraejemplos(modelo, entrada_df)
+    print(f"Ejecutando GS con Muestras={params_gs['muestras']}, AB={params_gs['ancho_banda']}, Max Iters={params_gs['max_iters']}...")
+    cEjs, starts, labels_orig = contraejemplos(
+        modelo, 
+        entrada_df, 
+        muestras=params_gs["muestras"],
+        ancho_banda=params_gs["ancho_banda"],
+        max_iters=params_gs["max_iters"]
+    )
     print(f"Contraejemplos encontrados: {len(cEjs)}")
 
     # Exportación de datos

@@ -2,8 +2,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import argparse
+import os
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -23,6 +25,8 @@ def entrenar_modelo(X, y, tipo_modelo="mlp"):
     scaler = StandardScaler()
     if tipo_modelo == "svm":
         clf = SVC(probability=True, random_state=42)
+    elif tipo_modelo == "arbol_decision":
+        clf = DecisionTreeClassifier(max_depth=5, min_samples_leaf=5, random_state=42)
     else: # mlp
         clf = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=2000, random_state=42)
     
@@ -63,7 +67,7 @@ def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
     d_dims = len(cols)
     distancias = []
     paso_radio = 0.05
-    radio_max  = 5.0 
+    radio_max  = 2.0 
     nPts_esfera = 300
     
     for b in anclajes_b0:
@@ -85,37 +89,48 @@ def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
     return np.mean(distancias)
 
 def main(dataset_path, tipo_modelo):
-    print("=== Fase 4: Análisis de Concept Drift (Deriva) ===")
-    print(f"[*] Dataset : {dataset_path}")
-    print(f"[*] Modelo  : {tipo_modelo.upper()}")
+    print("=== Análisis de Deriva Comparativa ===")
+    print(f"Dataset: {dataset_path}")
+    print(f"Modelo Complejo: {tipo_modelo.upper()}")
+    print("Modelo Simplificado: ÁRBOL DE DECISIÓN")
     
     try:
         X, y = cargar_datos(dataset_path)
-        print(f"[*] Datos procesados -> [{X.shape[0]} instancias, {X.shape[1]} variables.]")
+        print(f"Datos procesados -> [{X.shape[0]} instancias, {X.shape[1]} variables.]")
     except Exception as e:
-        print(f"[-] Error cargando los datos: {e}")
+        print(f"Error cargando los datos: {e}")
         return
 
-    print("[*] Entrenando modelo base...")
-    modelo_base = entrenar_modelo(X, y, tipo_modelo)
+    print("\n[1] Entrenando modelos base...")
+    modelo_complex = entrenar_modelo(X, y, tipo_modelo)
+    modelo_simple = entrenar_modelo(X, y, "arbol_decision")
     
-    print("[*] Buscando puntos tangenciales en la frontera (Bisección)...")
-    B_0 = frontera_biseccion(modelo_base, X, y, num_puntos=30)
+    print("\n[2] Buscando puntos tangenciales en ambas fronteras...")
+    B_0_complex = frontera_biseccion(modelo_complex, X, y, num_puntos=30)
+    B_0_simple = frontera_biseccion(modelo_simple, X, y, num_puntos=30)
     
-    if len(B_0) == 0:
-        print("[-] Fatal: No se lograron converger puntos tangenciales entre clases.")
+    if len(B_0_complex) == 0 or len(B_0_simple) == 0:
+        print("Fatal: No se lograron converger puntos tangenciales en alguna de las fronteras.")
         return
 
-    print(f"[+] Encontrados {len(B_0)} anclajes de frontera.")
-    lejanias_orig = lejania_datos(modelo_base, X)
+    print(f"    [+] Encontrados {len(B_0_complex)} anclajes para la Caja Negra ({tipo_modelo.upper()}).")
+    print(f"    [+] Encontrados {len(B_0_simple)} anclajes para el Árbol de Decisión.")
+    
+    # La lejanía/confianza se define mediante las probas de la caja negra
+    lejanias_orig = lejanias_orig = lejania_datos(modelo_complex, X)
     porcentajes_corte = [0, 10, 20, 30, 40, 50, 60]
-    registro_deriva = []
     
+    registro_deriva_complex = []
+    registro_deriva_simple = []
+    
+    print("\n[3] Ejecutando poda progresiva y reentrenamiento comparativo...")
     for P in porcentajes_corte:
         if P == 0:
-            deriva = 0.0
-            registro_deriva.append(deriva)
-            print(f" -> Puntos eliminados: {P:2d}% | Desplazamiento de frontera: {deriva:.4f}")
+            drift_complex = 0.0
+            drift_simple = 0.0
+            registro_deriva_complex.append(drift_complex)
+            registro_deriva_simple.append(drift_simple)
+            print(f" -> Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
             continue
             
         umbral_corte = np.percentile(lejanias_orig, 100 - P) 
@@ -124,28 +139,63 @@ def main(dataset_path, tipo_modelo):
         X_vivo = X[mascara_supervivientes]
         y_vivo = y[mascara_supervivientes]
         
-        modelo_cortado = entrenar_modelo(X_vivo, y_vivo, tipo_modelo)
-        deriva_media = cuantificar_deriva_espacial(B_0, modelo_cortado, X.columns)
-        registro_deriva.append(deriva_media)
+        # Reentrenar modelos podados
+        modelo_complex_cortado = entrenar_modelo(X_vivo, y_vivo, tipo_modelo)
+        modelo_simple_cortado = entrenar_modelo(X_vivo, y_vivo, "arbol_decision")
         
-        print(f" -> Puntos eliminados: {P:2d}% | Desplazamiento de frontera: {deriva_media:.4f}")
+        # Calcular derivas espaciales
+        drift_complex = cuantificar_deriva_espacial(B_0_complex, modelo_complex_cortado, X.columns)
+        drift_simple = cuantificar_deriva_espacial(B_0_simple, modelo_simple_cortado, X.columns)
+        
+        registro_deriva_complex.append(drift_complex)
+        registro_deriva_simple.append(drift_simple)
+        
+        print(f" -> Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(porcentajes_corte, registro_deriva, marker='o', color='#4CAF50', linewidth=2.5)
-    plt.fill_between(porcentajes_corte, registro_deriva, color='#4CAF50', alpha=0.15)
-    plt.grid(color='#E0E0E0', linestyle='--')
-    plt.title(f"Análisis de Deriva Espacial - {tipo_modelo.upper()}", fontweight='bold')
-    plt.xlabel("Porcentaje de Puntos Lejanos Eliminados (%)")
-    plt.ylabel("Distancia de Desplazamiento Media")
+    # Imprimir Reporte Final Comparativo
+    print("\n=========================================================")
+    print("                RESULTADOS DEL ANÁLISIS DE DERIVA")
+    print("=========================================================")
+    reporte_data = {
+        "Puntos Eliminados (%)": [f"{p}%" for p in porcentajes_corte],
+        f"Deriva Caja Negra ({tipo_modelo.upper()})": [f"{d:.4f}" for d in registro_deriva_complex],
+        "Deriva Árbol de Decisión": [f"{d:.4f}" for d in registro_deriva_simple]
+    }
+    df_reporte = pd.DataFrame(reporte_data)
+    print(df_reporte.to_string(index=False))
+    print("=========================================================")
+
+    # Generar visualización comparativa de alta calidad
+    print("\n[4] Generando gráfico comparativo de deriva...")
+    plt.figure(figsize=(10, 6))
+    
+    # Curva del Modelo Complejo
+    plt.plot(porcentajes_corte, registro_deriva_complex, marker='o', linestyle='-', linewidth=2.5, color='#9C27B0', label=f'Caja Negra ({tipo_modelo.upper()})')
+    plt.fill_between(porcentajes_corte, registro_deriva_complex, color='#9C27B0', alpha=0.10)
+    
+    # Curva del Modelo Simple (Árbol de Decisión)
+    plt.plot(porcentajes_corte, registro_deriva_simple, marker='s', linestyle='--', linewidth=2.5, color='#008080', label='Árbol de Decisión')
+    plt.fill_between(porcentajes_corte, registro_deriva_simple, color='#008080', alpha=0.10)
+    
+    plt.grid(color='#E0E0E0', linestyle='--', alpha=0.7)
+    plt.title(f"Análisis de Deriva Espacial (Dataset: {os.path.basename(dataset_path)})", fontweight='bold', fontsize=12, pad=15)
+    plt.xlabel("Porcentaje de puntos eliminados (%)", fontweight='bold')
+    plt.ylabel("Desplazamiento medio de la frontera", fontweight='bold')
     plt.xlim(-2, 65)
     plt.ylim(bottom=0.0)
+    plt.legend(frameon=True, edgecolor='#E0E0E0', loc='upper left')
     plt.tight_layout()
-    plt.show()
+    
+    os.makedirs("resultados", exist_ok=True)
+    grafico_path = "resultados/comparativa_deriva.png"
+    plt.savefig(grafico_path, dpi=150)
+    plt.close()
+    print(f"[+] Gráfico comparativo guardado en '{grafico_path}'")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ejecutar la Fase 4: Análisis de Concept Drift.")
+    parser = argparse.ArgumentParser(description="Análisis de Deriva.")
     parser.add_argument("--dataset", type=str, default="datos/originales/iris.data", help="Ruta al dataset")
-    parser.add_argument("--modelo", type=str, default="mlp", choices=["svm", "mlp"], help="Modelo a utilizar (perceptron omitido porque requiere probas)")
+    parser.add_argument("--modelo", type=str, default="mlp", choices=["svm", "mlp"], help="Modelo a utilizar (arbol_decision omitido porque requiere probas)")
     args = parser.parse_args()
     
     import warnings

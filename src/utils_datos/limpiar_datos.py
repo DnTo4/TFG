@@ -71,7 +71,8 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
         dataset_name = 'diabetes'
         print("Dataset detectado: Diabetes")
     else:
-        print("Dataset desconocido. No se puede aplicar limpieza.")
+        print("Dataset desconocido. Se omiten las restricciones de dominio.")
+        df.to_csv(file_path_out, index=False)
         return
         
     config = CONFIGURACIONES[dataset_name]
@@ -124,8 +125,24 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
             modelo = bundle["modelo"]
             
             # Predicción de los nuevos puntos
-            X_ce = df[cols_ce]
+            X_ce = df[cols_ce].copy()
             X_ce.columns = cols_orig
+            
+            # Alinear columnas con las que el modelo fue entrenado
+            if hasattr(modelo, "feature_names_in_"):
+                modelo_features = list(modelo.feature_names_in_)
+                missing_cols = [c for c in modelo_features if c not in X_ce.columns]
+                unseen_cols = [c for c in X_ce.columns if c not in modelo_features]
+                
+                if missing_cols or unseen_cols:
+                    raise ValueError(
+                        f"Discrepancia de características detectada.\n"
+                        f"El modelo cargado de '{model_path}' espera características: {modelo_features}\n"
+                        f"Pero el archivo de contraejemplos proporciona características: {list(X_ce.columns)}\n"
+                        f"Asegúrese de estar evaluando contraejemplos que correspondan al mismo dataset del modelo."
+                    )
+                # Reordenar columnas para que coincidan exactamente
+                X_ce = X_ce[modelo_features]
             
             y_ce_new = modelo.predict(X_ce)
             

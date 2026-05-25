@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import joblib
 
-from src.modelos.perceptron import train_model as train_pt_model
+from src.modelos.arbol_decision import train_model as train_arbol_model
 from src.modelos.svm import train_model as train_svm_model
 from src.modelos.mlp import train_model as train_mlp_model
 
@@ -13,7 +13,7 @@ RUTA_MODELO  = "modelos/modelo.joblib"
 RUTA_SALIDA  = "datos/procesados/contraejemplos.csv"
 
 # --- CONFIGURACIÓN DEL MODELO ---
-TIPO_MODELO  = "mlp" # Opciones: "svm", "mlp", "perceptron"
+TIPO_MODELO  = "mlp" # Opciones: "svm", "mlp", "arbol_decision"
 
 # --- HIPERPARÁMETROS DEL ALGORITMO GENÉTICO  ---
 TAMANO_POBLACION = 500   
@@ -28,7 +28,7 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     Args:
         ruta_train (str): Ruta al archivo de entrenamiento.
         ruta_test (str): Ruta al archivo de prueba.
-        tipo_modelo (str): Identificador del modelo ('perceptron', 'svm', 'mlp').
+        tipo_modelo (str): Identificador del modelo ('arbol_decision', 'svm', 'mlp').
 
     Returns:
         tuple: (modelo entrenado, limites_escalados, nombres_columnas, objeto_scaler)
@@ -37,7 +37,7 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
         ValueError: Si el tipo_modelo no está en el diccionario de modelos soportados.
     """
     modelos = {
-        "perceptron": train_pt_model,
+        "arbol_decision": train_arbol_model,
         "svm": train_svm_model,
         "mlp": train_mlp_model
     }
@@ -376,6 +376,8 @@ def exportar_resultados(pares, modelo, nombres_caracteristicas, archivo_csv="dat
     print(f"\nExportados {len(pares)} pares a '{archivo_csv}'")
 
 if __name__ == "__main__":
+    from src.utils.hiperparametros import obtener_hiperparametros
+    
     # Entrenamiento y preparación
     modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(
         RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO
@@ -384,15 +386,18 @@ if __name__ == "__main__":
     # Persistencia del modelo
     joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
     
+    # Obtener hiperparámetros óptimos
+    params_ga, _ = obtener_hiperparametros(RUTA_DATASET_TRAIN, TIPO_MODELO)
+    
     # Ejecución del Algoritmo Genético
     pares_finales, historial = algoritmo_genetico(
         modelo=modelo_entrenado, 
         limites=limites_datos,
         nombres_caracteristicas=nombres_dim,
         scaler=scaler_genetico,
-        tamano_poblacion=TAMANO_POBLACION, 
-        generaciones=GENERACIONES,
-        tasa_mutacion=TASA_MUTACION,
+        tamano_poblacion=params_ga["tamano_poblacion"], 
+        generaciones=params_ga["generaciones"],
+        tasa_mutacion=params_ga["tasa_mutacion"],
         num_pares=NUM_PARES
     )
     
