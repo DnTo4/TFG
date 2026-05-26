@@ -3,36 +3,29 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 
-# Configuración global
-CSV_PATH   = "datos/procesados/contraejemplos_memeticos.csv"
-MODEL_PATH = "modelos/modelo.joblib" 
-FRONTERA   = True    # Visualizar frontera de decisión (requiere modelo)
-FLECHAS    = False   # Visualizar flechas origen -> contraejemplo
-USAR_SHAP  = False   # Priorizar importancia global (SHAP) vs empírica (movimiento)
+"""Análisis estadístico e interpretación visual de contraejemplos.
 
-def analizar_csv(path):
-    """
-    Lee un archivo CSV con contraejemplos y realiza un análisis estadístico completo.
-    
-    El análisis incluye:
-    1. Estadísticas de distancia euclídea (L2).
-    2. Conteo de variables modificadas para lograr el cambio de clase.
-    3. Ranking de variables por frecuencia de cambio y magnitud del desplazamiento.
-    4. Cálculo de un score de importancia (frecuencia * magnitud).
+Proporciona herramientas para medir la dispersión, magnitudes de cambio,
+frecuencia de variación por variable, ranking global de relevancia de características
+y graficar los pares.
+"""
 
-    Args:
-        path (str): Ruta del archivo CSV generado por el algoritmo de contraejemplos.
+def analizar_csv(path, model_path="modelos/modelo.joblib", frontera=True, flechas=False, usar_shap=False):
+    """Ejecutar el análisis completo sobre los contraejemplos.
+
+    Mide distancias medias, variabilidad de cambios en variables, 
+    determina el ranking de importancia y delega la graficación bidimensional.
     """
     df = pd.read_csv(path)
 
     print("\n==============================")
     print("ANÁLISIS DE CONTRAEJEMPLOS")
-    print("==============================\n")
+    print("==============================")
 
     n = len(df)
     print(f"Numero de contraejemplos: {n}")
 
-    # Análisis de Distancias L2
+    # Calcular estadísticas de distancia
     if "dist_l2" in df.columns:
         print("\nDistancia al contraejemplo")
         print("---------------------------")
@@ -41,7 +34,7 @@ def analizar_csv(path):
         print(f"  maxima : {df['dist_l2'].max():.4f}")
         print(f"  mediana: {df['dist_l2'].median():.4f}")
 
-    # Análisis de sparsity
+    # Estimar nivel de dispersión de las características variadas
     if "num_features_changed" in df.columns:
         print("\nNumero de variables modificadas")
         print("--------------------------------")
@@ -53,7 +46,7 @@ def analizar_csv(path):
         for k, v in conteo.items():
             print(f"  {k} variables -> {v} veces ({100*v/n:.1f}%)")
 
-    # Análisis de frecuencia (cuántas veces se tocó cada variable)
+    # Evaluar la frecuencia de modificación individual por variable
     changed_cols = [c for c in df.columns if c.startswith("changed_")]
     if changed_cols:
         print("\nFrecuencia de cambio por variable")
@@ -64,7 +57,7 @@ def analizar_csv(path):
         for var, val in ranking_freq.items():
             print(f"  {var}: {val:.3f}")
 
-    # Análisis de magnitud (cuánto se movió cada variable en promedio)
+    # Medir la magnitud media de las alteraciones
     delta_cols = [c for c in df.columns if c.startswith("delta_")]
     if delta_cols:
         print("\nMagnitud media del cambio")
@@ -75,11 +68,11 @@ def analizar_csv(path):
         for var, val in ranking_mag.items():
             print(f"  {var}: {val:.4f}")
 
-    # Cálculo del Ranking Global
+    # Estimar el ranking de importancia
     nombres, score = None, None
     if changed_cols and delta_cols:
-        print("\nRanking global de importancia (frecuencia x magnitud)")
-        print("------------------------------------------------------")
+        print("\nRanking global de importancia")
+        print("----------------------------------")
         nombres = [c.replace("changed_", "") for c in changed_cols]
         freq    = df[changed_cols].mean().values
         mag     = df[delta_cols].abs().mean().values
@@ -94,38 +87,32 @@ def analizar_csv(path):
                 f"score={score[i]:.4f}"
             )
 
-    plot_contraejemplos(df, nombres, score)
+    # Graficado
+    graficar_contraejemplos(df, nombres, score, model_path=model_path, frontera=frontera, flechas=flechas, usar_shap=usar_shap)
 
-def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, modelo_entrenado=None, nombres_modelo_entrenado=None, ruta_dataset=None, ruta_guardar=None):
-    """
-    Genera una visualización 2D de los puntos originales vs. contraejemplos.
-    
-    Selecciona las dos variables más importantes (vía SHAP o vía Score empírico) 
-    para los ejes X e Y. Si se dispone del modelo, dibuja las regiones de 
-    decisión en el fondo.
+def graficar_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, modelo_entrenado=None, nombres_modelo_entrenado=None, ruta_dataset=None, ruta_guardar=None, model_path="modelos/modelo.joblib", frontera=True, flechas=False, usar_shap=False):
+    """Graficar los contraejemplos respecto a las variables más relevantes.
 
-    Args:
-        df (pandas.DataFrame): Datos de los contraejemplos.
-        nombres (list, opcional): Lista de nombres de las variables analizadas.
-        score (numpy.ndarray, opcional): Scores de importancia calculados en analizar_csv.
+    Determina las dos dimensiones prioritarias (SHAP o frecuencia x magnitud),
+    proyecta los puntos originales y contraejemplos.
     """
     print("\nPreparando gráfico...")
     modelo = modelo_entrenado
     nombres_modelo = nombres_modelo_entrenado
 
-    # Carga del modelo y metadatos si no se pasaron
+    # Cargar el modelo
     if modelo is None or nombres_modelo is None:
         try:
-            bundle         = joblib.load(MODEL_PATH)
+            bundle         = joblib.load(model_path)
             modelo         = bundle["modelo"]
             nombres_modelo = bundle["nombres"]
         except FileNotFoundError:
-            print(f"Aviso: no se encontró '{MODEL_PATH}', se omite la frontera y SHAP.")
+            print(f"Aviso: no se encontró '{model_path}', se omite la frontera y SHAP.")
 
     var_a, var_b = var_x, var_y
 
-    # Lógica de selección de variables para los ejes (si no se pasaron explícitamente)
-    if USAR_SHAP and modelo is not None and nombres_modelo is not None:
+    # Estimar relevancia con SHAP
+    if usar_shap and modelo is not None and nombres_modelo is not None:
         try:
             import shap
             X_orig = df[nombres_modelo]
@@ -145,6 +132,7 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
         except Exception as e:
             print(f"Error SHAP: {e}")
 
+    # Elegir variables usando score empírico
     if var_a is None or var_b is None:
         if nombres is not None and score is not None:
             print("Usando frecuencia x magnitud para los ejes.")
@@ -154,7 +142,7 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
             print("No se pudo seleccionar variables para el gráfico.")
             return
 
-    # Preparación de datos para el plot
+    # Extraer variables para los ejes cartesianos
     orig_a, orig_b = df[var_a].values, df[var_b].values
     ce_a, ce_b = df[f"ce_{var_a}"].values, df[f"ce_{var_b}"].values
     clases_all = sorted(df["pred_orig"].unique())
@@ -167,6 +155,7 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
     x_min_val, x_max_val = min(orig_a.min(), ce_a.min()), max(orig_a.max(), ce_a.max())
     y_min_val, y_max_val = min(orig_b.min(), ce_b.min()), max(orig_b.max(), ce_b.max())
     
+    # Cargar conjunto original para ajustar los límites
     if ruta_dataset is not None:
         try:
             df_fondo = pd.read_csv(ruta_dataset)
@@ -178,8 +167,8 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
         except Exception as e:
             print(f"Aviso al cargar dataset de fondo para límites: {e}")
 
-    # Renderizado de la Frontera de Decisión
-    if FRONTERA and modelo is not None:
+    # Estimar y dibujar la frontera de decisión
+    if frontera and modelo is not None:
         from matplotlib.colors import ListedColormap
         pad = 0.8
         x_min, x_max = x_min_val - pad, x_max_val + pad
@@ -187,7 +176,7 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
 
         xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400), np.linspace(y_min, y_max, 400))
         
-        # El modelo requiere todas las variables, las demás se fijan a la media
+        # Muestrear el clasificador
         grid_full = np.zeros((xx.size, len(nombres_modelo)))
         for j, col in enumerate(nombres_modelo):
             if col == var_a: grid_full[:, j] = xx.ravel()
@@ -206,7 +195,7 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
     else:
         clases_grid = clases_all
 
-    # Dibujar dataset original de fondo si se proporciona
+    # Graficar puntos originales
     if df_fondo is not None:
         try:
             target_col = df_fondo.columns[-1]
@@ -219,19 +208,19 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
         except Exception as e:
             print(f"No se pudo graficar el dataset de fondo: {e}")
 
-    # Dibujar puntos originales
+    # Graficar instancias originales
     for cls in clases_all:
         idx_color = clases_grid.index(cls) if cls in clases_grid else clases_all.index(cls)
         plt.scatter(orig_a[df["pred_orig"] == cls], orig_b[df["pred_orig"] == cls], 
                     color=colores_base[idx_color % len(colores_base)], s=40, alpha=0.8, label=f"{cls}", zorder=3)
 
-    # Dibujar flechas
-    if FLECHAS:
+    # Pintar flechas de transición
+    if flechas:
         for xa, ya, xb, yb in zip(orig_a, orig_b, ce_a, ce_b):
             plt.annotate("", xy=(xb, yb), xytext=(xa, ya),
                          arrowprops=dict(arrowstyle="->", color="#555555", lw=0.8, alpha=0.5))
 
-    # Dibujar contraejemplos
+    # Graficar contraejemplos finales
     for cls in clases_all:
         idx_color = clases_grid.index(cls) if cls in clases_grid else clases_all.index(cls)
         mask = df["pred_orig"] == cls
@@ -242,6 +231,8 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
     plt.xlabel(var_a); plt.ylabel(var_b)
     plt.title(f"Originales vs Contraejemplos  —  '{var_a}' y '{var_b}'")
     plt.legend(); plt.tight_layout()
+    
+    # Exportar el resultado si se indica una ruta de guardado
     if ruta_guardar:
         import os
         directorio = os.path.dirname(ruta_guardar)
@@ -252,4 +243,13 @@ def plot_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None, mo
     plt.show()
 
 if __name__ == "__main__":
-    analizar_csv(CSV_PATH)
+    import argparse
+    parser = argparse.ArgumentParser(description="Analiza y grafica contraejemplos.")
+    parser.add_argument("--csv", type=str, default="datos/procesados/contraejemplos_memeticos.csv", help="Ruta al archivo CSV con contraejemplos.")
+    parser.add_argument("--modelo", type=str, default="modelos/modelo.joblib", help="Ruta al modelo oráculo.")
+    parser.add_argument("--sin-frontera", action="store_true", help="No dibujar la frontera de decisión.")
+    parser.add_argument("--flechas", action="store_true", help="Dibujar flechas desde el origen al contraejemplo.")
+    parser.add_argument("--usar-shap", action="store_true", help="Priorizar importancia global de variables con SHAP en vez de empírica.")
+    args = parser.parse_args()
+
+    analizar_csv(args.csv, model_path=args.modelo, frontera=not args.sin_frontera, flechas=args.flechas, usar_shap=args.usar_shap)

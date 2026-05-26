@@ -1,36 +1,44 @@
-"""
-Validación de algoritmos en conjuntos de datos sintéticos
-"""
 import os
 import pandas as pd
 import argparse
 from src.contraejemplos.genetico import entrenar_clasificador, algoritmo_genetico, exportar_resultados
-from src.visualizacion.analisis import plot_contraejemplos
+from src.visualizacion.analisis import graficar_contraejemplos
 from src.utils.hiperparametros import obtener_hiperparametros
 
+"""Validación y generación de contraejemplos a partir de datos sintéticos.
+
+Entrena clasificadores sobre conjuntos de datos sintéticos sencillos
+y ejecuta algoritmos para generar, exportar y graficar los contraejemplos resultantes.
+"""
+
 def main(tipo_modelo="mlp", dataset="datos/originales/train_moons.csv"):
+    """Ejecutar la validación completa con datos sintéticos.
+
+    Orquesta el entrenamiento del clasificador, la ejecución del algoritmo genético global,
+    la exportación de los pares frontera y la generación de gráficos.
+    """
     print("=== Validación con Datos Sintéticos ===")
     
-    # Rutas
+    # Configurar rutas de archivos
     ruta_train = dataset
     ruta_test = dataset
     ruta_salida = "datos/procesados/contraejemplos_sinteticos.csv"
     
-    # Determinar ruta dinámica para el gráfico
+    # Determinar el nombre del archivo
     nombre_dataset = os.path.splitext(os.path.basename(dataset))[0]
     ruta_grafico = f"resultados/comparacion_{nombre_dataset}.png"
     
-    print(f"[*] Usando dataset: {ruta_train}")
+    print(f"Usando dataset: {ruta_train}")
     
-    # Entrenar el modelo
-    print(f"[*] Entrenando modelo {tipo_modelo.upper()}...")
+    # Entrenar el clasificador seleccionado
+    print(f"Entrenando modelo {tipo_modelo.upper()}...")
     modelo, limites, nombres_dim, scaler = entrenar_clasificador(ruta_train, ruta_test, tipo_modelo=tipo_modelo)
     
-    # Obtener hiperparámetros óptimos
+    # Obtener hiperparámetros
     params_ga, _ = obtener_hiperparametros(dataset, tipo_modelo)
     
-    # Ejecutar algoritmo genético
-    print(f"[*] Generando contraejemplos con Algoritmo Genético (Población={params_ga['tamano_poblacion']}, Gen={params_ga['generaciones']}, Mutación={params_ga['tasa_mutacion']})...")
+    # Ejecutar el algoritmo para encontrar contraejemplos
+    print(f"Generando contraejemplos con Algoritmo Genético (Población={params_ga['tamano_poblacion']}, Gen={params_ga['generaciones']}, Mutación={params_ga['tasa_mutacion']})...")
     resultados, historial = algoritmo_genetico(
         modelo=modelo,
         limites=limites,
@@ -42,20 +50,20 @@ def main(tipo_modelo="mlp", dataset="datos/originales/train_moons.csv"):
         num_pares=40
     )
     
-    # Exportar CSV
-    print(f"[*] Exportando pares de contraejemplos a {ruta_salida}...")
+    # Exportar los pares generados
+    print(f"Exportando pares de contraejemplos a {ruta_salida}...")
     exportar_resultados(resultados, modelo, nombres_dim, archivo_csv=ruta_salida)
     
-    # Graficar
-    print("[*] Generando visualización 2D de la frontera de decisión y los contraejemplos...")
+    # Generar gráfico de dispersión
+    print("Generando visualización...")
     try:
         df_resultados = pd.read_csv(ruta_salida)
-        plot_contraejemplos(df_resultados, var_x=nombres_dim[0], var_y=nombres_dim[1], 
-                            modelo_entrenado=modelo, nombres_modelo_entrenado=nombres_dim, 
-                            ruta_dataset=ruta_train, ruta_guardar=ruta_grafico)
-        print("[+] Visualización completada.")
+        graficar_contraejemplos(df_resultados, var_x=nombres_dim[0], var_y=nombres_dim[1], 
+                                modelo_entrenado=modelo, nombres_modelo_entrenado=nombres_dim, 
+                                ruta_dataset=ruta_train, ruta_guardar=ruta_grafico)
+        print("Visualización completada.")
     except Exception as e:
-        print(f"[-] Error al generar la visualización: {e}")
+        print(f"Error al generar la visualización: {e}")
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Validación en datos sintéticos.")

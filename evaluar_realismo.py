@@ -1,26 +1,32 @@
-"""
-Realismo y Factibilidad.
-Aplica restricciones de dominio biológicas/matemáticas
-y usa un Autoencoder para eliminar aquellos que caen 
-fuera de la distribución real de los datos.
-"""
 import argparse
 import os
 import pandas as pd
 import joblib
 from src.utils_datos.limpiar_datos import limpiar_y_validar
-from src.modelos.autoencoder import load_and_prepare_data, train_autoencoder, filter_counterfactuals
+from src.modelos.autoencoder import cargar_y_preparar_datos, entrenar_autoencoder, filtrar_contraejemplos
+
+"""Evaluar y filtrar el realismo de contraejemplos generados.
+
+Combina la verificación de restricciones de dominio y la evaluación
+del error de reconstrucción mediante autoencoders para descartar contraejemplos inverosímiles.
+"""
 
 def main(dataset_original, contraejemplos_in, modelo_path):
-    print("=== Evaluación de Realismo y Factibilidad ===")
+    """Ejecutar el flujo completo de evaluación de realismo.
+
+    Ejecuta filtros de dominio y utiliza un autoencoder para 
+    evaluar si los contraejemplos siguen la distribución de los datos.
+    """
+    print("=== Evaluación de Realismo ===")
     print(f"Dataset original: {dataset_original}")
     print(f"Evaluando: {contraejemplos_in}")
     
+    # Comprobar la existencia del archivo de contraejemplos
     if not os.path.exists(contraejemplos_in):
         print(f"Error: No se encuentra el archivo {contraejemplos_in}.")
         return
 
-    # Autodetección Inteligente del Dataset y Alineación Automática
+    # Validar compatibilidad de conjuntos de datos
     try:
         df_temp = pd.read_csv(contraejemplos_in)
         cols_ce = [col for col in df_temp.columns if col.startswith('ce_')]
@@ -49,23 +55,24 @@ def main(dataset_original, contraejemplos_in, modelo_path):
                 except:
                     pass
             
+            # Reentrenar clasificador si hay discrepancia de características
             if not model_compatible or dataset_original != detected_dataset_path:
-                print(f"\n[Autocorrección] Detectado dataset '{detected_dataset.upper()}' en los contraejemplos.")
-                print(f"               Alineando dataset original a: '{detected_dataset_path}'")
+                print(f"\nDetectado dataset '{detected_dataset.upper()}' en los contraejemplos.")
+                print(f"Alineando dataset original a: '{detected_dataset_path}'")
                 dataset_original = detected_dataset_path
                 
-                print(f"               Reentrenando clasificador de referencia para '{detected_dataset.upper()}'...")
+                print(f"Reentrenando clasificador para '{detected_dataset.upper()}'...")
                 try:
                     from src.modelos.mlp import train_model as train_mlp
                     m, _, _, n = train_mlp(detected_dataset_path, detected_dataset_path)
                     joblib.dump({"modelo": m, "nombres": n}, modelo_path)
-                    print(f"               [+] Clasificador entrenado y guardado en '{modelo_path}'")
+                    print(f"Clasificador entrenado y guardado en '{modelo_path}'")
                 except Exception as e:
-                    print(f"               [!] No se pudo reentrenar el clasificador automáticamente: {e}")
+                    print(f"No se pudo reentrenar el clasificador automáticamente: {e}")
     except Exception as e:
-        print(f"[!] Advertencia al leer características de entrada para autodetección: {e}")
+        print(e)
 
-    # Reglas de Dominio
+    # Aplicar restricciones de dominio
     print("\nRestricciones de Dominio")
     archivo_limpio = contraejemplos_in.replace(".csv", "_limpios.csv")
     limpiar_y_validar(
@@ -74,21 +81,21 @@ def main(dataset_original, contraejemplos_in, modelo_path):
         model_path=modelo_path
     )
     
-    # Autoencoder
+    # Iniciar validación mediante autoencoder
     print("\nFiltrado por Autoencoder")
     print("Entrenando Autoencoder...")
     
-    # Preparar datos originales para entrenar el autoencoder
+    # Cargar y preparar datos originales para ajustar el autoencoder
     target_col = "Outcome" if "diabetes" in dataset_original.lower() else "class" if "iris" in dataset_original.lower() else None
     try:
-        X_train_raw = load_and_prepare_data(dataset_original, target_col=target_col)
-        autoencoder, scaler, umbral_reconstruccion = train_autoencoder(X_train_raw)
+        X_train_raw = cargar_y_preparar_datos(dataset_original, target_col=target_col)
+        autoencoder, scaler, umbral_reconstruccion = entrenar_autoencoder(X_train_raw)
         
-        # Evaluar los contraejemplos que ya han pasado el filtro
+        # Filtrar contraejemplos utilizando el error de reconstrucción
         archivo_final_factible = contraejemplos_in.replace(".csv", "_factibles.csv")
         
         print(f"Filtrando contraejemplos con Umbral de Error L2 = {umbral_reconstruccion:.4f}...")
-        filter_counterfactuals(
+        filtrar_contraejemplos(
             autoencoder=autoencoder,
             scaler=scaler,
             umbral=umbral_reconstruccion,

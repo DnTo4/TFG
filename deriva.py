@@ -9,7 +9,18 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+"""Análisis y cuantificación de la deriva espacial en fronteras de decisión.
+
+Permite evaluar cómo se desplazan las fronteras de clasificadores al reducir 
+progresivamente el conjunto de datos de entrenamiento mediante poda de instancias.
+"""
+
 def cargar_datos(ruta):
+    """Cargar y preprocesar el conjunto de datos para el análisis.
+
+    Lee el archivo CSV, detecta la codificación de etiquetas y normaliza
+    las variables categóricas si es necesario.
+    """
     df = pd.read_csv(ruta)
     y_raw = df[df.columns[-1]]
     if y_raw.dtype == object:
@@ -22,6 +33,11 @@ def cargar_datos(ruta):
     return X, y
 
 def entrenar_modelo(X, y, tipo_modelo="mlp"):
+    """Entrenar un clasificador.
+
+    Configura y ajusta clasificadores de tipo SVM, Árbol de Decisión o MLP
+    utilizando escalado de características.
+    """
     scaler = StandardScaler()
     if tipo_modelo == "svm":
         clf = SVC(probability=True, random_state=42)
@@ -35,12 +51,18 @@ def entrenar_modelo(X, y, tipo_modelo="mlp"):
     return modelo
 
 def frontera_biseccion(modelo, X, y, num_puntos=50):
+    """Buscar puntos localizados sobre la frontera de decisión.
+
+    Utiliza el método numérico de bisección entre pares de instancias del conjunto
+    que pertenecen a diferentes clases predichas.
+    """
     cols = X.columns
     anclajes = []
     np.random.seed(42)
     intentos = 0
     X_vals = X.values if hasattr(X, 'values') else X
     
+    # Iterar buscando pares de puntos con predicciones distintas
     while len(anclajes) < num_puntos and intentos < num_puntos * 20:
         intentos += 1
         p0 = X_vals[np.random.randint(0, len(X_vals))]
@@ -49,6 +71,7 @@ def frontera_biseccion(modelo, X, y, num_puntos=50):
         c1 = modelo.predict(pd.DataFrame([p1], columns=cols))[0]
         if c0 == c1: continue
             
+        # Refinar el punto medio mediante aproximación por bisección
         for _ in range(15):
             pm = (p0 + p1) / 2.0
             cm = modelo.predict(pd.DataFrame([pm], columns=cols))[0]
@@ -59,17 +82,28 @@ def frontera_biseccion(modelo, X, y, num_puntos=50):
         anclajes.append((p0 + p1) / 2.0)
     return np.array(anclajes)
 
-def lejania_datos(modelo, X):
+def lejanias_orig_datos(modelo, X):
+    """Calcular la lejanía o certeza de predicción para cada instancia.
+
+    Obtiene la probabilidad máxima asignada por el clasificador para cada
+    punto del conjunto.
+    """
     probas = modelo.predict_proba(X)
     return np.max(probas, axis=1)
 
 def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
+    """Medir el desplazamiento espacial de la frontera original en el nuevo modelo.
+
+    Realiza un barrido radial mediante muestreo esférico alrededor de cada punto de anclaje
+    para encontrar la distancia mínima hasta la nueva frontera de decisión.
+    """
     d_dims = len(cols)
     distancias = []
     paso_radio = 0.05
     radio_max  = 2.0 
     nPts_esfera = 300
     
+    # Estimar el radio de deriva para cada punto de anclaje
     for b in anclajes_b0:
         clase_original = modelo_nuevo.predict(pd.DataFrame([b], columns=cols))[0]
         encontrado = False
@@ -89,11 +123,17 @@ def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
     return np.mean(distancias)
 
 def main(dataset_path, tipo_modelo):
-    print("=== Análisis de Deriva Comparativa ===")
+    """Ejecutar análisis de deriva espacial.
+
+    Entrena los clasificadores, localiza sus fronteras iniciales, aplica podas sucesivas
+    en función de la certidumbre de los datos y cuantifica la deriva espacial resultante.
+    """
+    print("=== Análisis de Deriva ===")
     print(f"Dataset: {dataset_path}")
     print(f"Modelo Complejo: {tipo_modelo.upper()}")
     print("Modelo Simplificado: ÁRBOL DE DECISIÓN")
     
+    # Cargar el conjunto de datos
     try:
         X, y = cargar_datos(dataset_path)
         print(f"Datos procesados -> [{X.shape[0]} instancias, {X.shape[1]} variables.]")
@@ -101,36 +141,37 @@ def main(dataset_path, tipo_modelo):
         print(f"Error cargando los datos: {e}")
         return
 
-    print("\n[1] Entrenando modelos base...")
+    print("\nEntrenando modelos base...")
     modelo_complex = entrenar_modelo(X, y, tipo_modelo)
     modelo_simple = entrenar_modelo(X, y, "arbol_decision")
     
-    print("\n[2] Buscando puntos tangenciales en ambas fronteras...")
+    print("\nBuscando puntos tangenciales...")
     B_0_complex = frontera_biseccion(modelo_complex, X, y, num_puntos=30)
     B_0_simple = frontera_biseccion(modelo_simple, X, y, num_puntos=30)
     
     if len(B_0_complex) == 0 or len(B_0_simple) == 0:
-        print("Fatal: No se lograron converger puntos tangenciales en alguna de las fronteras.")
+        print("Error: No se lograron converger puntos tangenciales en alguna de las fronteras.")
         return
 
-    print(f"    [+] Encontrados {len(B_0_complex)} anclajes para la Caja Negra ({tipo_modelo.upper()}).")
-    print(f"    [+] Encontrados {len(B_0_simple)} anclajes para el Árbol de Decisión.")
-    
-    # La lejanía/confianza se define mediante las probas de la caja negra
-    lejanias_orig = lejanias_orig = lejania_datos(modelo_complex, X)
+    print(f"Encontrados {len(B_0_complex)} anclajes para la Caja Negra ({tipo_modelo.upper()}).")
+    print(f"Encontrados {len(B_0_simple)} anclajes para el Árbol de Decisión.")
+
+    # Calcular certezas en los puntos originales
+    lejanias_orig = lejanias_orig_datos(modelo_complex, X)
     porcentajes_corte = [0, 10, 20, 30, 40, 50, 60]
     
     registro_deriva_complex = []
     registro_deriva_simple = []
     
-    print("\n[3] Ejecutando poda progresiva y reentrenamiento comparativo...")
+    print("\nEjecutando poda y reentrenamiento...")
+    # Evaluar la deriva para cada porcentaje de poda configurado
     for P in porcentajes_corte:
         if P == 0:
             drift_complex = 0.0
             drift_simple = 0.0
             registro_deriva_complex.append(drift_complex)
             registro_deriva_simple.append(drift_simple)
-            print(f" -> Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
+            print(f"Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
             continue
             
         umbral_corte = np.percentile(lejanias_orig, 100 - P) 
@@ -143,21 +184,21 @@ def main(dataset_path, tipo_modelo):
         modelo_complex_cortado = entrenar_modelo(X_vivo, y_vivo, tipo_modelo)
         modelo_simple_cortado = entrenar_modelo(X_vivo, y_vivo, "arbol_decision")
         
-        # Calcular derivas espaciales
+        # Calcular derivas espaciales con respecto a los anclajes de partida
         drift_complex = cuantificar_deriva_espacial(B_0_complex, modelo_complex_cortado, X.columns)
         drift_simple = cuantificar_deriva_espacial(B_0_simple, modelo_simple_cortado, X.columns)
         
         registro_deriva_complex.append(drift_complex)
         registro_deriva_simple.append(drift_simple)
         
-        print(f" -> Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
+        print(f"Puntos eliminados: {P:2d}% | Deriva Caja Negra: {drift_complex:.4f} | Deriva Árbol: {drift_simple:.4f}")
 
-    # Imprimir Reporte Final Comparativo
+    # Imprimir informe
     print("\n=========================================================")
     print("                RESULTADOS DEL ANÁLISIS DE DERIVA")
     print("=========================================================")
     reporte_data = {
-        "Puntos Eliminados (%)": [f"{p}%" for p in porcentajes_corte],
+        "Porcentaje de puntos eliminados": [f"{p}%" for p in porcentajes_corte],
         f"Deriva Caja Negra ({tipo_modelo.upper()})": [f"{d:.4f}" for d in registro_deriva_complex],
         "Deriva Árbol de Decisión": [f"{d:.4f}" for d in registro_deriva_simple]
     }
@@ -165,32 +206,33 @@ def main(dataset_path, tipo_modelo):
     print(df_reporte.to_string(index=False))
     print("=========================================================")
 
-    # Generar visualización comparativa de alta calidad
-    print("\n[4] Generando gráfico comparativo de deriva...")
+    # Dibujar gráfica de comparación temporal y espacial de deriva
+    print("\nGenerando gráfico comparativo...")
     plt.figure(figsize=(10, 6))
     
-    # Curva del Modelo Complejo
+    # Graficar curva de la caja negra
     plt.plot(porcentajes_corte, registro_deriva_complex, marker='o', linestyle='-', linewidth=2.5, color='#9C27B0', label=f'Caja Negra ({tipo_modelo.upper()})')
     plt.fill_between(porcentajes_corte, registro_deriva_complex, color='#9C27B0', alpha=0.10)
     
-    # Curva del Modelo Simple (Árbol de Decisión)
+    # Graficar curva del modelo subrogado
     plt.plot(porcentajes_corte, registro_deriva_simple, marker='s', linestyle='--', linewidth=2.5, color='#008080', label='Árbol de Decisión')
     plt.fill_between(porcentajes_corte, registro_deriva_simple, color='#008080', alpha=0.10)
     
     plt.grid(color='#E0E0E0', linestyle='--', alpha=0.7)
     plt.title(f"Análisis de Deriva Espacial (Dataset: {os.path.basename(dataset_path)})", fontweight='bold', fontsize=12, pad=15)
-    plt.xlabel("Porcentaje de puntos eliminados (%)", fontweight='bold')
+    plt.xlabel("Porcentaje de puntos eliminados", fontweight='bold')
     plt.ylabel("Desplazamiento medio de la frontera", fontweight='bold')
     plt.xlim(-2, 65)
     plt.ylim(bottom=0.0)
     plt.legend(frameon=True, edgecolor='#E0E0E0', loc='upper left')
     plt.tight_layout()
     
+    # Exportar imagen
     os.makedirs("resultados", exist_ok=True)
     grafico_path = "resultados/comparativa_deriva.png"
     plt.savefig(grafico_path, dpi=150)
     plt.close()
-    print(f"[+] Gráfico comparativo guardado en '{grafico_path}'")
+    print(f"Gráfico guardado en '{grafico_path}'")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Análisis de Deriva.")

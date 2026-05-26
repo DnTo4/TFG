@@ -4,87 +4,62 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 import os
 
-# --- Hiperparámetros del Autoencoder ---
-AE_ACTIVATION = 'relu'
-AE_SOLVER = 'adam'
-AE_MAX_ITER = 1000
-AE_RANDOM_STATE = 42
-AE_PERCENTIL_UMBRAL = 99
-# ---------------------------------------
+"""Entrenamiento de autoencoder para evaluación de realismo.
 
-def load_and_prepare_data(file_path, target_col=None):
-    """
-    Carga un dataset y separa las características (X) de la etiqueta (y).
-    
-    Args:
-        file_path (str): Ruta al archivo CSV con los datos originales.
-        target_col (str, optional): Nombre de la columna objetivo. Si es None, 
-            asume que es la última columna.
-            
-    Returns:
-        pd.DataFrame: DataFrame solo con las características numéricas originales.
+Entrena un MLP para aprender la distribución del dataset original y
+filtrar contraejemplos con errores de reconstrucción elevados.
+"""
+
+def cargar_y_preparar_datos(file_path, target_col=None):
+    """Cargar y preparar los datos de entrada.
+
+    Descarta la etiqueta de clase y conserva únicamente las variables numéricas.
     """
     df = pd.read_csv(file_path)
     if target_col is None:
         target_col = df.columns[-1]
     
     X = df.drop(columns=[target_col])
-    # Opcional: asegurarnos de usar solo variables numéricas
     X = X.select_dtypes(include=[np.number])
     return X
 
-def train_autoencoder(X):
-    """
-    Entrena un Autoencoder basado en Perceptrón Multicapa (MLPRegressor) para 
-    aprender la representación subyacente de los datos originales.
-    
-    Args:
-        X (pd.DataFrame): DataFrame de características originales estandarizadas o sin estandarizar.
-        
-    Returns:
-        tuple: (modelo MLPRegressor, StandardScaler entrenado, umbral de error calculado).
+def entrenar_autoencoder(X, activation='relu', solver='adam', max_iter=1000, random_state=42, percentil_umbral=99):
+    """Ajustar un MLP sobre los datos escalados.
+
+    Calcula la dimensión oculta en base al número de características de entrada,
+    entrena el MLP y estima el umbral del error de reconstrucción (MSE).
     """
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
-    # Configuramos el MLPRegressor como Autoencoder
-    # La arquitectura de cuello de botella comprimirá y luego reconstruirá la información
     n_features = X.shape[1]
+    # Configurar dimensiones ocultas
     hidden_layer_sizes = (max(int(n_features * 1.5), 2), max(int(n_features // 2), 2), max(int(n_features * 1.5), 2))
     
     autoencoder = MLPRegressor(
         hidden_layer_sizes=hidden_layer_sizes,
-        activation=AE_ACTIVATION,
-        solver=AE_SOLVER,
-        max_iter=AE_MAX_ITER,
-        random_state=AE_RANDOM_STATE
+        activation=activation,
+        solver=solver,
+        max_iter=max_iter,
+        random_state=random_state
     )
     
     autoencoder.fit(X_scaled, X_scaled)
     
-    # Calcular el error de reconstrucción (MSE) para los datos de entrenamiento
+    # Calcular el error de reconstrucción
     X_pred = autoencoder.predict(X_scaled)
     mse = np.mean(np.power(X_scaled - X_pred, 2), axis=1)
     
-    # Definir el umbral como el percentil correspondiente del error de los datos reales
-    umbral = np.percentile(mse, AE_PERCENTIL_UMBRAL)
+    # Definir el umbral basándose en un percentil
+    umbral = np.percentile(mse, percentil_umbral)
     
     return autoencoder, scaler, umbral
 
-def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_path):
-    """
-    Filtra los contraejemplos basándose en su error de reconstrucción usando
-    el autoencoder previamente entrenado.
-    
-    Args:
-        autoencoder (MLPRegressor): Modelo autoencoder ya entrenado.
-        scaler (StandardScaler): Escalador entrenado con los datos originales.
-        umbral (float): Valor máximo de error MSE permitido.
-        file_path_ce (str): Ruta al archivo de contraejemplos original.
-        output_path (str): Ruta donde se guardarán los contraejemplos filtrados.
-        
-    Returns:
-        pd.DataFrame: DataFrame con los contraejemplos factibles (que pasaron el filtro).
+def filtrar_contraejemplos(autoencoder, scaler, umbral, file_path_ce, output_path):
+    """Filtrar contraejemplos usando el autoencoder.
+
+    Alinea las características, calcula sus errores de reconstrucción y
+    conserva únicamente aquellos que quedan por debajo del umbral de tolerancia.
     """
     if not os.path.exists(file_path_ce):
         print(f"No se encontró el archivo: {file_path_ce}")
@@ -92,7 +67,7 @@ def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_pat
         
     df_ce = pd.read_csv(file_path_ce)
     
-    # Extraer las columnas que corresponden al contraejemplo generado ('ce_...')
+    # Separar las columnas con prefijo 'ce_'
     cols_ce = [col for col in df_ce.columns if col.startswith('ce_')]
     X_ce = df_ce[cols_ce]
     
@@ -100,11 +75,11 @@ def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_pat
         print("No se encontraron columnas con el prefijo 'ce_' en el archivo de contraejemplos.")
         return None
         
-    # Renombrar las columnas para que coincidan con las originales usadas en el fit del scaler
+    # Renombrar las columnas
     X_ce = X_ce.copy()
     X_ce.columns = [col.replace('ce_', '') for col in X_ce.columns]
     
-    # Alinear columnas con las que el scaler fue entrenado
+    # Validar coherencia de las características
     if hasattr(scaler, "feature_names_in_"):
         scaler_features = list(scaler.feature_names_in_)
         missing_cols = [c for c in scaler_features if c not in X_ce.columns]
@@ -115,28 +90,24 @@ def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_pat
                 f"Discrepancia de características detectada para el Autoencoder.\n"
                 f"El Scaler espera características: {scaler_features}\n"
                 f"Pero los contraejemplos proporcionan características: {list(X_ce.columns)}\n"
-                f"Asegúrese de estar utilizando el dataset original correcto (--dataset)."
             )
-        # Reordenar columnas para que coincidan exactamente
+        # Ordenar columnas
         X_ce = X_ce[scaler_features]
         
-    # Estandarizar los contraejemplos
+    # Estandarizar y proyectar usando el autoencoder
     X_ce_scaled = scaler.transform(X_ce)
-    
-    # Reconstruir usando el autoencoder
     X_ce_pred = autoencoder.predict(X_ce_scaled)
     
-    # Calcular el error de reconstrucción para cada contraejemplo
+    # Calcular el error del contraejemplo
     mse_ce = np.mean(np.power(X_ce_scaled - X_ce_pred, 2), axis=1)
     
-    # Filtrar los que estén por debajo (o igual) del umbral
+    # Filtrar contraejemplos factibles
     mask_factibles = mse_ce <= umbral
     df_factibles = df_ce[mask_factibles].copy()
     
-    # Opcional: Agregar el error de reconstrucción al CSV de salida para referencia
     df_factibles['mse_reconstruccion'] = mse_ce[mask_factibles]
     
-    # Guardar en CSV
+    # Exportar resultados a un CSV
     df_factibles.to_csv(output_path, index=False)
     
     print(f"\n--- Resultados del Filtro de Veracidad ---")
@@ -149,21 +120,35 @@ def filter_counterfactuals(autoencoder, scaler, umbral, file_path_ce, output_pat
     return df_factibles
 
 if __name__ == "__main__":
-    # Rutas de los archivos (ajustables según la estructura del proyecto)
-    DATASET_ORIGINAL = "datos/originales/diabetes.csv"
-    CONTRAEJEMPLOS = "datos/procesados/contraejemplos.csv"
-    CONTRAEJEMPLOS_FACTIBLES = "datos/procesados/contraejemplos_factibles.csv"
+    import argparse
     
-    print("Iniciando el filtro de veracidad con Autoencoder (MLP)...")
+    parser = argparse.ArgumentParser(description="Filtro de veracidad y realismo con Autoencoder.")
+    parser.add_argument("--dataset", type=str, default="datos/originales/diabetes.csv", help="Ruta al dataset original para entrenar el autoencoder (default: datos/originales/diabetes.csv)")
+    parser.add_argument("--contraejemplos", type=str, default="datos/procesados/contraejemplos.csv", help="Ruta al archivo CSV con los contraejemplos a evaluar (default: datos/procesados/contraejemplos.csv)")
+    parser.add_argument("--salida", type=str, default="datos/procesados/contraejemplos_factibles.csv", help="Ruta para guardar los contraejemplos válidos/factibles (default: datos/procesados/contraejemplos_factibles.csv)")
+    parser.add_argument("--target", type=str, default=None, help="Nombre de la columna objetivo del dataset original (default: última columna)")
+    parser.add_argument("--percentil", type=float, default=99.0, help="Percentil de error para definir el umbral (default: 99.0)")
+    parser.add_argument("--max-iter", type=int, default=1000, help="Iteraciones máximas del Autoencoder (default: 1000)")
+    parser.add_argument("--random-state", type=int, default=42, help="Semilla del generador aleatorio (default: 42)")
     
-    # 1. Cargar y preparar datos originales
+    args = parser.parse_args()
+    
+    print("Iniciando el filtro de veracidad...")
+    
+    # Cargar y preprocesar los datos originales
     print("Cargando dataset original...")
-    X_train = load_and_prepare_data(DATASET_ORIGINAL)
+    X_train = cargar_y_preparar_datos(args.dataset, target_col=args.target)
     
-    # 2. Entrenar el Autoencoder
+    # Entrenar el Autoencoder
     print(f"Entrenando Autoencoder sobre {X_train.shape[1]} características...")
-    modelo, scaler, umbral = train_autoencoder(X_train)
+    modelo, scaler, umbral = entrenar_autoencoder(
+        X_train, 
+        max_iter=args.max_iter, 
+        random_state=args.random_state, 
+        percentil_umbral=args.percentil
+    )
     
-    # 3. Filtrar los contraejemplos
+    # Filtrar contraejemplos y almacenar
     print("Filtrando contraejemplos...")
-    filter_counterfactuals(modelo, scaler, umbral, CONTRAEJEMPLOS, CONTRAEJEMPLOS_FACTIBLES)
+    os.makedirs(os.path.dirname(args.salida), exist_ok=True)
+    filtrar_contraejemplos(modelo, scaler, umbral, args.contraejemplos, args.salida)

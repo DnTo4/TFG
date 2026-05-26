@@ -1,54 +1,47 @@
-"""
-Módulo de utilidades para la resolución de hiperparámetros de GA y GS.
+"""Obtención de hiperparámetros óptimos.
+
+Define y carga las configuraciones recomendadas para algoritmos Genéticos y
+Growing Spheres según el clasificador y conjunto de datos de interés.
 """
 
 def obtener_hiperparametros(dataset_name_or_path, tipo_modelo):
-    """
-    Retorna los hiperparámetros óptimos para GA y GS según el dataset y clasificador.
-    
-    Args:
-        dataset_name_or_path (str): Nombre o ruta del dataset.
-        tipo_modelo (str): Tipo de clasificador ('svm', 'mlp', 'arbol_decision').
-        
-    Returns:
-        tuple: (params_ga, params_gs)
-            params_ga: dict con {'tamano_poblacion', 'generaciones', 'tasa_mutacion'}
-            params_gs: dict con {'muestras', 'ancho_banda', 'max_iters'}
+    """Obtener hiperparámetros recomendados para el dataset y clasificador dados.
+
+    Normaliza las cadenas de entrada, evalúa las condiciones del dataset
+    y retorna los diccionarios de configuración para la búsqueda global y local.
     """
     ds = str(dataset_name_or_path).lower()
     mod = str(tipo_modelo).lower()
-    
-    # Por defecto y para conjuntos sintéticos (como moons), se usan los parámetros de Iris.
-    # Iris GA: 200 individuos, 40 generaciones, 30% mutación (para todos SVM, MLP, Árbol de Decisión)
+
+    # Definir hiperparámetros por defecto para el Algoritmo Genético
     params_ga = {
         "tamano_poblacion": 200,
         "generaciones": 40,
         "tasa_mutacion": 0.30
     }
     
-    # Iris GS por defecto:
+    # Asignar parámetros por defecto para Growing Spheres
     if "svm" in mod:
         params_gs = {
             "muestras": 100,
-            "ancho_banda": 0.2, # 20%
+            "ancho_banda": 0.2, 
             "max_iters": 20
         }
     elif "mlp" in mod:
         params_gs = {
             "muestras": 300,
-            "ancho_banda": 0.5, # 50%
+            "ancho_banda": 0.5, 
             "max_iters": 20
         }
-    else: # arbol_decision / arbol
+    else: # arbol_decision
         params_gs = {
             "muestras": 500,
-            "ancho_banda": 0.8, # 80%
+            "ancho_banda": 0.8, 
             "max_iters": 20
         }
-        
-    # Si es Diabetes:
+
+    # Sobreescribir configuraciones específicas para el dataset Diabetes
     if "diabetes" in ds:
-        # GA para Diabetes:
         if "svm" in mod:
             params_ga = {
                 "tamano_poblacion": 200,
@@ -57,7 +50,7 @@ def obtener_hiperparametros(dataset_name_or_path, tipo_modelo):
             }
             params_gs = {
                 "muestras": 100,
-                "ancho_banda": 0.8, # 80%
+                "ancho_banda": 0.8, 
                 "max_iters": 60
             }
         elif "mlp" in mod:
@@ -68,10 +61,10 @@ def obtener_hiperparametros(dataset_name_or_path, tipo_modelo):
             }
             params_gs = {
                 "muestras": 500,
-                "ancho_banda": 0.8, # 80%
+                "ancho_banda": 0.8,
                 "max_iters": 20
             }
-        else: # arbol_decision / arbol
+        else: # arbol_decision
             params_ga = {
                 "tamano_poblacion": 200,
                 "generaciones": 80,
@@ -79,7 +72,7 @@ def obtener_hiperparametros(dataset_name_or_path, tipo_modelo):
             }
             params_gs = {
                 "muestras": 500,
-                "ancho_banda": 0.5, # 50%
+                "ancho_banda": 0.5,
                 "max_iters": 60
             }
             

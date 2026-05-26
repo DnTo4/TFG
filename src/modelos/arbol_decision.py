@@ -7,54 +7,46 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GridSearchCV
 import warnings
 
+"""Entrenamiento y optimización de un árbol de decisión.
+"""
+
 def parse_df(df, target_col):
-    """
-    Analiza y prepara el DataFrame, detectando si se trata de un dataset estándar 
-    o un archivo de contraejemplos.
+    """Extraer y separar las características y clases del DataFrame.
 
-    Si detecta contraejemplos, expande el dataset duplicando las filas: una con 
-    los valores originales y otra con los valores del contraejemplo ('ce_'), 
-    asignando las clases correspondientes.
-
-    Args:
-        df (pd.DataFrame): El DataFrame cargado desde el CSV.
-        target_col (str): Nombre de la columna objetivo. Si es None, se asume la última.
-
-    Returns:
-        tuple: (X, y) listos para el procesamiento o entrenamiento.
+    Distingue si el DataFrame corresponde a contraejemplos exportados (con prefijo 'ce_')
+    o a conjuntos de datos originales.
     """
     if "pred_orig" in df.columns and any(c.startswith("ce_") for c in df.columns):
-        # Extraemos las columnas originales descartando métricas de análisis
+        # Filtrar columnas originales
         orig_cols = [c for c in df.columns if not c.startswith("ce_") and 
                      not c.startswith("delta_") and 
                      not c.startswith("changed_") and 
                      c not in ["pred_orig", "dist_l2", "num_features_changed", "mse_reconstruccion"]]
         
-        # Separar datos originales
+        # Obtener características y clases
         X_orig = df[orig_cols]
         y_orig = df["pred_orig"]
         
-        # Preparar datos de contraejemplos (renombrando columnas para que coincidan)
+        # Extraer características del contraejemplo
         X_ce = df[[f"ce_{c}" for c in orig_cols]]
         X_ce.columns = orig_cols
         
-        # Intentar determinar la clase del contraejemplo usando el modelo original
+        # Estimar la clase del contraejemplo
         try:
             import joblib
             bundle = joblib.load("modelos/modelo.joblib")
             modelo_oraculo = bundle["modelo"]
             y_ce = pd.Series(modelo_oraculo.predict(X_ce))
         except Exception as e:
-            print(f"Aviso: No se pudo cargar modelo.joblib para inferir clases: {e}")
-            # Fallback: Inversión binaria si el modelo no está disponible
+            print(f"No se pudo cargar modelo.joblib para inferir clases: {e}")
             y_ce = 1 - pd.to_numeric(y_orig, errors='coerce').fillna(0).astype(int)
         
-        # Concatenar ambos sets para formar el dataset de entrenamiento
+        # Fusionar datos originales y contraejemplos
         X = pd.concat([X_orig, X_ce], axis=0).reset_index(drop=True)
         y = pd.concat([y_orig, y_ce], axis=0).reset_index(drop=True)
         return X, y
     else:
-        # Modo estándar: Dataset de clasificación tradicional
+        # Extraer la última columna
         if target_col is None:
             target_col = df.columns[-1]
         y = df[target_col]
@@ -62,60 +54,42 @@ def parse_df(df, target_col):
         return X, y
 
 def load_data(train_path, test_path, target_column=None):
+    """Cargar conjuntos de datos de entrenamiento y prueba.
+
+    Asegura que las características resultantes sean idénticas en ambos conjuntos
+    para garantizar dimensiones coherentes antes de entrenar el clasificador.
     """
-    Carga los archivos de entrenamiento y prueba, aplicando el parseo y preprocesamiento.
-
-    Realiza la conversión de variables categóricas
-    de manera consistente entre ambos conjuntos de datos.
-
-    Args:
-        train_path (str): Ruta al archivo CSV de entrenamiento.
-        test_path (str): Ruta al archivo CSV de prueba.
-        target_column (str, optional): Nombre de la columna etiqueta.
-
-    Returns:
-        tuple: (X_train, y_train, X_test, y_test)
-    """
-    # Leer datasets
     df_train = pd.read_csv(train_path)
     df_test = pd.read_csv(test_path)
 
     X_train, y_train = parse_df(df_train, target_column)
     X_test, y_test = parse_df(df_test, target_column)
 
-    # Convertir categóricas a numéricas
+    # Codificar variables categóricas
     X_combined = pd.concat([X_train, X_test], axis=0)
     X_combined = pd.get_dummies(X_combined)
 
-    # Separar de nuevo en entrenamiento y prueba
+    # Volver a dividir en entrenamiento y prueba
     X_train = X_combined.iloc[:len(X_train)]
     X_test = X_combined.iloc[len(X_train):]
 
     return X_train, y_train, X_test, y_test
 
 def train_model(train_path, test_path, target_column=None):
-    """
-    Entrena un Árbol de Decisión utilizando un pipeline con escalado estándar y 
-    optimización de hiperparámetros mediante búsqueda en rejilla con validación cruzada.
+    """Entrenar el árbol de decisión mediante Grid Search.
 
-    Args:
-        train_path (str): Ruta al archivo de entrenamiento.
-        test_path (str): Ruta al archivo de prueba.
-        target_column (str, optional): Nombre de la columna objetivo.
-
-    Returns:
-        tuple: (modelo, datasets_tupla, precision, nombres_columnas)
+    Ajusta hiperparámetros y retorna el mejor estimador entrenado y sus métricas.
     """
-    # Cargar y preprocesar datos
+    # Cargar y preprocesar los conjuntos de datos
     X_train, y_train, X_test, y_test = load_data(train_path, test_path, target_column)
 
-    # Crear el pipeline base
+    # Estructurar el flujo
     pipeline = make_pipeline(
         StandardScaler(),
         DecisionTreeClassifier(random_state=42)
     )
 
-    # Definir rejilla de hiperparámetros a optimizar (rejilla amplia para permitir máxima capacidad adaptativa)
+    # Configurar la rejilla de parámetros a explorar
     param_grid = {
         'decisiontreeclassifier__max_depth': [3, 4, 5, 6, 8, 10, None],
         'decisiontreeclassifier__min_samples_split': [2, 5, 10],
@@ -123,12 +97,12 @@ def train_model(train_path, test_path, target_column=None):
         'decisiontreeclassifier__criterion': ['gini', 'entropy']
     }
 
-    # Ajustar número de pliegues para validación cruzada según el tamaño del set de entrenamiento
+    # Definir el número de divisiones para validación cruzada
     cv_folds = min(5, len(X_train) // 2)
     if cv_folds < 2:
         cv_folds = 2
 
-    # Ejecutar Grid Search
+    # Ejecutar la búsqueda de rejilla
     grid_search = GridSearchCV(
         pipeline,
         param_grid=param_grid,
@@ -144,33 +118,37 @@ def train_model(train_path, test_path, target_column=None):
     best_model = grid_search.best_estimator_
     best_params = grid_search.best_params_
 
-    # Evaluación de desempeño
+    # Estimar la exactitud final
     y_pred = best_model.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
-    # Lista de nombres de características
     nombres = X_train.columns.tolist()
 
     return best_model, (X_train, y_train, X_test, y_test), acc, nombres
 
 if __name__ == "__main__":
     import joblib
+    import argparse
+    import os
     
-    # --- Configuración de ejecución ---
-    TRAIN_PATH = "datos/procesados/contraejemplos.csv"
-    TEST_PATH = "datos/procesados/contraejemplos.csv"
-    TARGET_COLUMN = None  # Ajustar según el dataset
-    OUTPUT_MODEL = "modelos/modelo.joblib"
+    parser = argparse.ArgumentParser(description="Entrenamiento de Árbol de Decisión.")
+    parser.add_argument("--train", type=str, default="datos/procesados/contraejemplos.csv", help="Ruta al dataset de entrenamiento (default: datos/procesados/contraejemplos.csv)")
+    parser.add_argument("--test", type=str, default="datos/procesados/contraejemplos.csv", help="Ruta al dataset de prueba (default: datos/procesados/contraejemplos.csv)")
+    parser.add_argument("--target", type=str, default=None, help="Nombre de la columna objetivo (default: última columna)")
+    parser.add_argument("--salida", type=str, default="modelos/modelo.joblib", help="Ruta para exportar el modelo entrenado (default: modelos/modelo.joblib)")
+    
+    args = parser.parse_args()
     
     try:
-        print(f"Entrenando Árbol de Decisión con datos de '{TRAIN_PATH}'...")
+        print(f"Entrenando Árbol de Decisión con datos de '{args.train}'...")
         modelo, (X_train, y_train, X_test, y_test), acc, nombres = train_model(
-            TRAIN_PATH, TEST_PATH, target_column=TARGET_COLUMN
+            args.train, args.test, target_column=args.target
         )
         print(f"Precision de test: {acc:.4f}")
         
-        # Exportar el modelo en el formato estandarizado del proyecto
-        joblib.dump({"modelo": modelo, "nombres": nombres}, OUTPUT_MODEL)
-        print(f"Modelo exportado a '{OUTPUT_MODEL}'")
+        # Guardar el modelo
+        os.makedirs(os.path.dirname(args.salida), exist_ok=True)
+        joblib.dump({"modelo": modelo, "nombres": nombres}, args.salida)
+        print(f"Modelo exportado a '{args.salida}'")
     except Exception as e:
-        print(f"No se pudo completar el test local: {e}")
+        print(f"No se pudo completar el entrenamiento: {e}")

@@ -5,58 +5,53 @@ import joblib
 from src.contraejemplos.genetico import entrenar_clasificador, algoritmo_genetico, exportar_resultados
 from src.contraejemplos.growing_spheres import growing_spheres_generacion, feature_selection
 
-# ---- PARÁMETROS DE CONFIGURACIÓN Y RUTAS ----
-RUTA_DATASET_TRAIN = "datos/originales/diabetes.csv"
-RUTA_DATASET_TEST  = "datos/originales/diabetes.csv"
-RUTA_MODELO  = "modelos/modelo.joblib"
-RUTA_SALIDA  = "datos/procesados/contraejemplos_memeticos.csv"
+"""Algoritmo memético para la generación de contraejemplos.
 
-TIPO_MODELO = "mlp" # Opciones: "svm", "mlp", "arbol_decision"
-
-# ---- HIPERPARÁMETROS AG ----
-TAMANO_POBLACION_GA = 100
-GENERACIONES_GA      = 60
-TASA_MUTACION_GA    = 0.20
-NUM_PARES_GA        = 25 # Número de zonas prometedoras a extraer para refinamiento local
-
-# ---- HIPERPARÁMETROS GS ----
-MUESTRAS_GS = 500
-ANCHO_BANDA_GS = 0.5
-MAX_ITERS_GS = 50
-USAR_FS = True # Aplicar feature selection
+Combina la exploración global del algoritmo genético con la explotación local 
+de Growing Spheres.
+"""
 
 def main():
+    """Ejecutar el flujo completo del Algoritmo Memético.
+
+    Configura argumentos, entrena el clasificador base, ejecuta la exploración
+    global, optimiza localmente cada semilla frontera y exporta los resultados.
     """
-    Función principal que coordina el Algoritmo Memético.
-    
-    Flujo de trabajo:
-    1. Entrenar/Cargar el modelo.
-    2. Ejecutar búsqueda global (AG) para identificar áreas con transiciones de clase.
-    3. Para cada resultado del AG, ejecutar búsqueda local (GS) para ajustar el contraejemplo.
-    4. Aplicar feature selection para simplificar la explicación del contraejemplo.
-    5. Exportar los pares a un archivo CSV.
-    """
-    print("=====================================================")
-    print("  ALGORITMO MEMETICO: AG + GS  ")
-    print("=====================================================\n")
-    
+    import argparse
+    import os
     from src.utils.hiperparametros import obtener_hiperparametros
 
-    # Entrenamientodel modelo
+    parser = argparse.ArgumentParser(description="Algoritmo Memético (AG + GS) para contraejemplos.")
+    parser.add_argument("--train", type=str, default="datos/originales/diabetes.csv", help="Ruta al dataset de entrenamiento (default: datos/originales/diabetes.csv)")
+    parser.add_argument("--test", type=str, default="datos/originales/diabetes.csv", help="Ruta al dataset de prueba (default: datos/originales/diabetes.csv)")
+    parser.add_argument("--modelo-path", type=str, default="modelos/modelo.joblib", help="Ruta para guardar el modelo entrenado (default: modelos/modelo.joblib)")
+    parser.add_argument("--salida", type=str, default="datos/procesados/contraejemplos_memeticos.csv", help="Ruta para exportar los resultados (default: datos/procesados/contraejemplos_memeticos.csv)")
+    parser.add_argument("--modelo", type=str, default="mlp", choices=["svm", "mlp", "arbol_decision"], help="Tipo de clasificador base (default: mlp)")
+    parser.add_argument("--num-pares-ga", type=int, default=25, help="Número de zonas prometedoras a extraer para refinamiento (default: 25)")
+    parser.add_argument("--no-fs", action="store_true", help="Desactivar feature selection en Growing Spheres")
+    
+    args = parser.parse_args()
+
+    print("============================")
+    print("  ALGORITMO MEMETICO")
+    print("============================\n")
+    
+    # Entrenar el clasificador base
     print("Entrenando modelo...")
     modelo_entrenado, limites_datos, nombres_dim, scaler_genetico = entrenar_clasificador(
-        RUTA_DATASET_TRAIN, RUTA_DATASET_TEST, TIPO_MODELO
+        args.train, args.test, args.modelo
     )
     
-    # Persistencia del modelo para análisis posteriores
-    joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, RUTA_MODELO)
-    print(f"Modelo guardado en '{RUTA_MODELO}'.\n")
+    # Guardar modelo
+    os.makedirs(os.path.dirname(args.modelo_path), exist_ok=True)
+    joblib.dump({"modelo": modelo_entrenado, "nombres": nombres_dim}, args.modelo_path)
+    print(f"Modelo guardado en '{args.modelo_path}'.\n")
     
-    # Obtener hiperparámetros óptimos (combinados)
-    params_ga, params_gs = obtener_hiperparametros(RUTA_DATASET_TRAIN, TIPO_MODELO)
+    # Obtener hiperparámetros
+    params_ga, params_gs = obtener_hiperparametros(args.train, args.modelo)
     
-    # Búsqueda global (AG)
-    print(f"--- Busqueda Global con AG (Población={params_ga['tamano_poblacion']}, Gen={params_ga['generaciones']}, Mutación={params_ga['tasa_mutacion']}) ---")
+    # Búsqueda global
+    print(f"--- Búsqueda Global (Población={params_ga['tamano_poblacion']}, Gen={params_ga['generaciones']}, Mutación={params_ga['tasa_mutacion']}) ---")
     pares_ga, historial = algoritmo_genetico(
         modelo=modelo_entrenado, 
         limites=limites_datos,
@@ -65,34 +60,31 @@ def main():
         tamano_poblacion=params_ga["tamano_poblacion"], 
         generaciones=params_ga["generaciones"],
         tasa_mutacion=params_ga["tasa_mutacion"],
-        num_pares=NUM_PARES_GA
+        num_pares=args.num_pares_ga
     )
     
-    # Verificación de resultados del AG
+    # Validar resultados del algoritmo genético
     if len(pares_ga) == 0:
-        print("El AG no encontro ninguna transicion/individuo valido en las zonas exploradas.")
+        print("El AG no encontró ninguna transición/individuo válido en las zonas exploradas.")
         return
         
-    print(f"\nExploracion completada. Extraidos {len(pares_ga)} individuos semilla.")
+    print(f"\nExploración completada. Extraídos {len(pares_ga)} individuos semilla.")
     
-    # 3. Búsqueda Local
-    print(f"\n--- Busqueda Local con GS (Muestras={params_gs['muestras']}, AB={params_gs['ancho_banda']}, Max Iters={params_gs['max_iters']}) ---")
+    # Búsqueda local
+    print(f"\n--- Búsqueda Local (Muestras={params_gs['muestras']}, AB={params_gs['ancho_banda']}, Max Iters={params_gs['max_iters']}) ---")
     d_dim = len(nombres_dim)
     pares_memeticos = []
     
-    # Función de predicción del modelo
     predict_fn = modelo_entrenado.predict
     
+    # Optimizar y refinar cada semilla
     for idx, par in enumerate(pares_ga):
-        # Tomamos solo el punto original como centro para la búsqueda local de GS.
         x_orig = par[:d_dim] 
-        
-        # Convertimos a DataFrame para mantener compatibilidad con nombres de columnas
         df_orig = pd.DataFrame([x_orig], columns=nombres_dim)
         
-        print(f" Refinando semilla {idx+1}/{len(pares_ga)}...\n", end=" ")
+        print(f" Refinando semilla {idx+1}/{len(pares_ga)}...", end=" ")
         try:
-            # Growing Spheres
+            # Ejecutar Growing Spheres
             ce_gs = growing_spheres_generacion(
                 predict_fn=predict_fn,
                 x=df_orig,
@@ -102,29 +94,31 @@ def main():
                 random_state=42 + idx
             )
             
-            # Feature selection
-            if USAR_FS:
+            # Reducir cambios mediante selección de variables
+            if not args.no_fs:
                 ce_gs = feature_selection(predict_fn, df_orig, ce_gs)
                 
-            # Ensamblar el nuevo par optimizado
+            # Ensamblar y guardar el par
             pares_memeticos.append(np.concatenate([x_orig, ce_gs.flatten()]))
+            print("Refinado con éxito.")
         except Exception as e:
-            # Captura fallos si GS no encuentra una transición en el número de iteraciones dado
+            # Omitir semilla si falla
             print(f"Fallo ({type(e).__name__}) -> Omitido.")
             continue
 
-    # Exportación de Resultados
-    print("\n=====================================================")
+    # Exportar resultados
+    print("\n============================")
     if len(pares_memeticos) > 0:
         pares_memeticos_np = np.array(pares_memeticos)
-        # Se reutiliza la función de exportación del módulo genético
-        exportar_resultados(pares_memeticos_np, modelo_entrenado, nombres_dim, RUTA_SALIDA)
-        print(f"Resultados guardados en '{RUTA_SALIDA}'.")
+        os.makedirs(os.path.dirname(args.salida), exist_ok=True)
+        exportar_resultados(pares_memeticos_np, modelo_entrenado, nombres_dim, args.salida)
+        print(f"Resultados guardados en '{args.salida}'.")
     else:
-        print("Ningún individuo consiguio ser refinado")
+        print("Ningún individuo consiguió ser refinado")
 
 if __name__ == "__main__":
     import warnings
+    # Lanzar suprimiendo advertencias externas
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         main()

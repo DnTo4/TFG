@@ -1,17 +1,15 @@
-"""
-Script para la limpieza y validación biológica de datasets y contraejemplos.
-
-Este módulo toma un conjunto de datos y aplica
-restricciones basadas en el conocimiento del dominio
-para garantizar que los valores producidos sean humanamente posibles y
-matemáticamente coherentes con su naturaleza.
-"""
 import pandas as pd
 import numpy as np
 import joblib
 import os
 
-# --- Configuración del Limpiador por Dataset ---
+"""Módulo para la limpieza, acotación y validación de contraejemplos.
+
+Proporciona funciones para acotar variables a rangos realistas,
+redondear valores enteros de forma coherente y filtrar aquellos puntos que dejen
+de ser contraejemplos.
+"""
+
 CONFIGURACIONES = {
     'diabetes': {
         'RANGOS_BIOLOGICOS': {
@@ -36,17 +34,13 @@ CONFIGURACIONES = {
         'VARS_ENTERAS': []
     }
 }
-# ---------------------------------------------
 
 def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.joblib"):
-    """
-    Toma un CSV con contraejemplos, recorta los valores a rangos humanamente posibles,
-    redondea las variables enteras y verifica que sigan siendo contraejemplos.
-    
-    Args:
-        file_path_in (str): Ruta al archivo CSV original.
-        file_path_out (str): Ruta donde guardar el CSV modificado.
-        model_path (str): Ruta al modelo oráculo.
+    """Aplicar restricciones y validar contraejemplos con el modelo.
+
+    Carga el fichero de contraejemplos, detecta el dataset, aplica límites
+    y redondea variables enteras. Posteriormente, usa el modelo para comprobar
+    si las instancias modificadas siguen cambiando de clase.
     """
     if not os.path.exists(file_path_in):
         print(f"Error: No se encontró el archivo {file_path_in}")
@@ -55,15 +49,15 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
     df = pd.read_csv(file_path_in)
     print(f"Cargados {len(df)} registros de {file_path_in}")
     
-    # Identificar columnas de características originales
+    # Identificar columnas con variables modificadas
     cols_ce = [col for col in df.columns if col.startswith('ce_')]
     cols_orig = [col.replace('ce_', '') for col in cols_ce]
     
     if not cols_ce:
-        print("No se encontraron columnas de contraejemplos (ce_...).")
+        print("No se encontraron columnas de contraejemplos.")
         return
         
-    # Detectar el dataset
+    # Detectar el conjunto de datos implícito
     if 'sepal_length' in cols_orig:
         dataset_name = 'iris'
         print("Dataset detectado: Iris")
@@ -79,7 +73,7 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
     rangos_biologicos = config['RANGOS_BIOLOGICOS']
     vars_enteras = config['VARS_ENTERAS']
         
-    # Aplicar recortes y redondeos
+    # Acotar y redondear variables
     for orig_col, ce_col in zip(cols_orig, cols_ce):
         if orig_col in rangos_biologicos:
             lim_inf, lim_sup = rangos_biologicos[orig_col]
@@ -88,6 +82,7 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
         if orig_col in vars_enteras:
             df[ce_col] = df[ce_col].round().astype(int)
     
+    # Acotar y redondear variables
     for orig_col in cols_orig:
         if orig_col in rangos_biologicos:
             lim_inf, lim_sup = rangos_biologicos[orig_col]
@@ -95,10 +90,9 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
         if orig_col in vars_enteras:
             df[orig_col] = df[orig_col].round().astype(int)
             
-    # Recalcular deltas y distancias L2 tras las modificaciones
     dist_l2_list = []
+    # Recalcular variaciones e indicadores de cambio
     for index, row in df.iterrows():
-        # Recalcular deltas
         for orig_col, ce_col in zip(cols_orig, cols_ce):
             delta_col = f'delta_{orig_col}'
             changed_col = f'changed_{orig_col}'
@@ -109,7 +103,7 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
                 if changed_col in df.columns:
                     df.at[index, changed_col] = 1 if delta != 0 else 0
                     
-        # Recalcular distancia euclídea
+        # Recalcular la distancia euclidiana final
         vec_orig = row[cols_orig].values.astype(float)
         vec_ce = row[cols_ce].values.astype(float)
         dist = np.linalg.norm(vec_ce - vec_orig)
@@ -118,17 +112,17 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
     if 'dist_l2' in df.columns:
         df['dist_l2'] = dist_l2_list
 
-    # Comprobar que siguen siendo contraejemplos
+    # Validar que las instancias siguen forzando un cambio de predicción
     if os.path.exists(model_path):
         try:
             bundle = joblib.load(model_path)
             modelo = bundle["modelo"]
             
-            # Predicción de los nuevos puntos
+            # Obtener predicciones sobre los nuevos puntos acotados
             X_ce = df[cols_ce].copy()
             X_ce.columns = cols_orig
             
-            # Alinear columnas con las que el modelo fue entrenado
+            # Alinear características con el formato esperado por el modelo
             if hasattr(modelo, "feature_names_in_"):
                 modelo_features = list(modelo.feature_names_in_)
                 missing_cols = [c for c in modelo_features if c not in X_ce.columns]
@@ -139,14 +133,12 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
                         f"Discrepancia de características detectada.\n"
                         f"El modelo cargado de '{model_path}' espera características: {modelo_features}\n"
                         f"Pero el archivo de contraejemplos proporciona características: {list(X_ce.columns)}\n"
-                        f"Asegúrese de estar evaluando contraejemplos que correspondan al mismo dataset del modelo."
                     )
-                # Reordenar columnas para que coincidan exactamente
                 X_ce = X_ce[modelo_features]
             
             y_ce_new = modelo.predict(X_ce)
             
-            # Comparar con la predicción original
+            # Descartar registros que no alteran la predicción original
             if 'pred_orig' in df.columns:
                 mask_contraejemplo_valido = y_ce_new != df['pred_orig'].values
                 
@@ -162,13 +154,16 @@ def limpiar_y_validar(file_path_in, file_path_out, model_path="modelos/modelo.jo
     else:
         print(f"No se encontró el modelo en {model_path}.")
 
-    # Guardar archivo limpio
+    # Guardar resultados
     df.to_csv(file_path_out, index=False)
     print(f"\nFinalizado. {len(df)} contraejemplos válidos guardados en {file_path_out}")
 
 if __name__ == "__main__":
-    # Puedes cambiar los archivos de entrada y salida aquí
-    ARCHIVO_ENTRADA = "datos/procesados/contraejemplos_factibles.csv"
-    ARCHIVO_SALIDA = "datos/procesados/contraejemplos_limpios.csv"
+    import argparse
+    parser = argparse.ArgumentParser(description="Limpia y valida biológicamente contraejemplos generados.")
+    parser.add_argument("--entrada", type=str, default="datos/procesados/contraejemplos_factibles.csv", help="Ruta al archivo CSV de entrada.")
+    parser.add_argument("--salida", type=str, default="datos/procesados/contraejemplos_limpios.csv", help="Ruta al archivo CSV de salida.")
+    parser.add_argument("--modelo", type=str, default="modelos/modelo.joblib", help="Ruta al modelo oráculo.")
+    args = parser.parse_args()
 
-    limpiar_y_validar(ARCHIVO_ENTRADA, ARCHIVO_SALIDA)
+    limpiar_y_validar(args.entrada, args.salida, model_path=args.modelo)
