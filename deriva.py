@@ -88,8 +88,20 @@ def lejanias_orig_datos(modelo, X):
     Obtiene la probabilidad máxima asignada por el clasificador para cada
     punto del conjunto.
     """
-    probas = modelo.predict_proba(X)
-    return np.max(probas, axis=1)
+    try:
+        probas = modelo.predict_proba(X)
+        return np.max(probas, axis=1)
+    except AttributeError:
+        # Fallback a decision_function si predict_proba no está disponible (ej. SVM preentrenado con probability=False)
+        if hasattr(modelo, "decision_function"):
+            dec = modelo.decision_function(X)
+            if len(dec.shape) > 1 and dec.shape[1] > 1:
+                return np.max(np.abs(dec), axis=1)
+            else:
+                return np.abs(dec)
+        else:
+            return np.ones(len(X))
+
 
 def cuantificar_deriva_espacial(anclajes_b0, modelo_nuevo, cols):
     """Medir el desplazamiento espacial de la frontera original en el nuevo modelo.
@@ -141,9 +153,39 @@ def main(dataset_path, tipo_modelo):
         print(f"Error cargando los datos: {e}")
         return
 
-    print("\nEntrenando modelos base...")
-    modelo_complex = entrenar_modelo(X, y, tipo_modelo)
-    modelo_simple = entrenar_modelo(X, y, "arbol_decision")
+    print("\nCargando o entrenando modelos base...")
+    import joblib
+    
+    # Intentar cargar el modelo complejo preentrenado
+    modelo_complex = None
+    if os.path.exists("modelos/modelo.joblib"):
+        try:
+            bundle = joblib.load("modelos/modelo.joblib")
+            if set(bundle.get("nombres", [])) == set(X.columns):
+                modelo_complex = bundle["modelo"]
+                print(f"Cargado modelo complejo preentrenado desde 'modelos/modelo.joblib'.")
+        except Exception as e:
+            pass
+            
+    if modelo_complex is None:
+        print(f"Entrenando modelo complejo ({tipo_modelo.upper()})...")
+        modelo_complex = entrenar_modelo(X, y, tipo_modelo)
+        
+    # Intentar cargar el modelo simplificado preentrenado
+    modelo_simple = None
+    if os.path.exists("modelos/modelo_simplificado.joblib"):
+        try:
+            bundle_simple = joblib.load("modelos/modelo_simplificado.joblib")
+            if set(bundle_simple.get("nombres", [])) == set(X.columns):
+                modelo_simple = bundle_simple["modelo"]
+                print("Cargado modelo simplificado preentrenado desde 'modelos/modelo_simplificado.joblib'.")
+        except Exception as e:
+            pass
+            
+    if modelo_simple is None:
+        print("Entrenando modelo simple (Árbol de Decisión)...")
+        modelo_simple = entrenar_modelo(X, y, "arbol_decision")
+
     
     print("\nBuscando puntos tangenciales...")
     B_0_complex = frontera_biseccion(modelo_complex, X, y, num_puntos=30)
@@ -195,7 +237,7 @@ def main(dataset_path, tipo_modelo):
 
     # Imprimir informe
     print("\n=========================================================")
-    print("                RESULTADOS DEL ANÁLISIS DE DERIVA")
+    print("                RESULTADOS DE DERIVA")
     print("=========================================================")
     reporte_data = {
         "Porcentaje de puntos eliminados": [f"{p}%" for p in porcentajes_corte],

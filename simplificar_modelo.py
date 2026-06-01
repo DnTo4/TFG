@@ -15,11 +15,10 @@ from src.utils.hiperparametros import obtener_hiperparametros
 from src.utils_datos.limpiar_datos import limpiar_y_validar
 from src.modelos.autoencoder import cargar_y_preparar_datos, entrenar_autoencoder, filtrar_contraejemplos
 
-"""Simplificación de modelos complejos mediante subrogados globales aumentados.
+"""Simplificación de modelos complejos mediante subrogados globales.
 
 Entrena un clasificador de tipo caja negra, genera contraejemplos representativos en su frontera,
-los valida mediante restricciones biológicas y autoencoders, y los incorpora al entrenamiento
-de un árbol de decisión más sencillo y explicable para aproximar fielmente el modelo complejo.
+los valida y los incorpora al entrenamiento de un árbol de decisión para aproximar el modelo complejo.
 """
 
 warnings.simplefilter("ignore")
@@ -27,12 +26,12 @@ warnings.simplefilter("ignore")
 def main():
     """Ejecutar el flujo de simplificación de modelos.
 
-    Carga los datos, entrena el modelo de caja negra y el subrogado de referencia,
+    Carga los datos, entrena el modelo de caja negra y el subrogado base,
     genera y filtra contraejemplos, entrena el subrogado aumentado y
     visualiza los resultados de la comparación en un gráfico.
     """
     parser = argparse.ArgumentParser(description="Simplificación de Modelo Complejo usando un Subrogado Global con Contraejemplos.")
-    parser.add_argument("--dataset", type=str, default="datos/originales/train_moons.csv", help="Ruta al dataset original (CSV)")
+    parser.add_argument("--dataset", type=str, default="datos/originales/diabetes.csv", help="Ruta al dataset original (CSV)")
     parser.add_argument("--modelo", type=str, default="svm", choices=["svm", "mlp"], help="Tipo de modelo complejo (caja negra) a simplificar")
     parser.add_argument("--generaciones", type=str, default="120", help="Número de generaciones para el Algoritmo Genético")
     parser.add_argument("--tamano_poblacion", type=str, default="300", help="Tamaño de la población del Algoritmo Genético")
@@ -88,7 +87,7 @@ def main():
     
     print(f"Precisión Árbol Base: {acc_arbol_base*100:.2f}%")
 
-    # Ajustar un subrogado global sin datos adicionales
+    # Ajustar un subrogado global base
     print("Preparando datos para el Subrogado Global Base...")
     X_train_raw = train_df.drop(columns=[target_col])
     y_train_surr = caja_negra.predict(X_train_raw)
@@ -162,10 +161,10 @@ def main():
     ruta_ce_raw = "datos/procesados/contraejemplos_simplificacion_raw.csv"
     exportar_resultados(pares, caja_negra, nombres_dim, archivo_csv=ruta_ce_raw)
 
-    # Persistir la caja negra entrenada para validaciones
+    # Guardar la caja negra entrenada
     joblib.dump({"modelo": caja_negra, "nombres": nombres_dim}, "modelos/modelo.joblib")
 
-    # Aplicar restricciones de dominio biológico al conjunto generado
+    # Aplicar restricciones de dominio
     print("Aplicando restricciones de dominio...")
     temp_limpios_path = "datos/procesados/temp_limpios.csv"
     limpiar_y_validar(
@@ -219,54 +218,70 @@ def main():
     X_combined = pd.concat([X_train_raw, X_ce_parsed], axis=0).reset_index(drop=True)
     y_combined = pd.concat([y_train_surr_series, y_ce_parsed], axis=0).reset_index(drop=True)
     
-    # Generar el dataset aumentado final
+    # Generar el dataset aumentado
     df_combined = X_combined.copy()
     df_combined[target_col] = y_combined
     
     temp_combined_path = "datos/procesados/temp_combined_train.csv"
     df_combined.to_csv(temp_combined_path, index=False)
     
-    # Entrenar el árbol explicable aumentado
+    # Entrenar el árbol aumentado
     arbol_surr_aug, _, _, _ = train_arbol_decision(temp_combined_path, temp_test_path)
     y_pred_surr_aug = arbol_surr_aug.predict(X_test_raw)
     acc_surr_aug = accuracy_score(y_test_true, y_pred_surr_aug)
     print(f"Precisión Subrogado Aumentado: {acc_surr_aug*100:.2f}%")
+    
+    # Guardar el modelo simplificado (árbol de decisión subrogado aumentado)
+    joblib.dump({"modelo": arbol_surr_aug, "nombres": nombres_dim}, "modelos/modelo_simplificado.joblib")
 
-    # Presentar informe comparativo
-    print("\n=====================================")
-    print("                RESULTADOS")
-    print("=====================================")
+
+    # Calcular la fidelidad de cada modelo
+    fid_arbol_base = accuracy_score(y_pred_caja_negra, y_pred_arbol_base)
+    fid_surr_base = accuracy_score(y_pred_caja_negra, y_pred_surr_base)
+    fid_surr_aug = accuracy_score(y_pred_caja_negra, y_pred_surr_aug)
+
+    # Informe comparativo
+    print("\n=============")
+    print("RESULTADOS")
+    print("===============")
+    print(f"Referencia Caja Negra ({args.modelo.upper()}) - Accuracy (vs Real): {acc_caja_negra*100:.2f}%\n")
+    
     reporte_data = {
         "Modelo / Clasificador": [
-            f"Caja Negra ({args.modelo.upper()})",
             "Árbol de Decisión Base",
             "Subrogado Global Base",
             "Subrogado Global Aumentado"
         ],
-        "Accuracy": [
-            f"{acc_caja_negra*100:.2f}%",
+        "Accuracy (vs Real)": [
             f"{acc_arbol_base*100:.2f}%",
             f"{acc_surr_base*100:.2f}%",
             f"{acc_surr_aug*100:.2f}%"
+        ],
+        "Fidelidad (vs Caja Negra)": [
+            f"{fid_arbol_base*100:.2f}%",
+            f"{fid_surr_base*100:.2f}%",
+            f"{fid_surr_aug*100:.2f}%"
         ]
     }
     df_reporte = pd.DataFrame(reporte_data)
     print(df_reporte.to_string(index=False))
-    print("====================================")
+    print("=========================================================================")
 
-    # Crear gráfico comparando la precisión
+    # Crear gráfico
     print("\nGenerando gráfico comparativo...")
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(11, 6))
     
     labels = ['Árbol Base', 'Subrogado Base', 'Subrogado Aumentado']
     accuracies = [acc_arbol_base * 100, acc_surr_base * 100, acc_surr_aug * 100]
+    fidelities = [fid_arbol_base * 100, fid_surr_base * 100, fid_surr_aug * 100]
     
     x = np.arange(len(labels))
-    width = 0.5
+    width = 0.35
     
-    rects1 = ax.bar(x, accuracies, width, label='Accuracy', color='#FF7F50', edgecolor='#E0E0E0', linewidth=0.7)
+    rects1 = ax.bar(x - width/2, accuracies, width, label='Accuracy (vs Real)', color='#FF7F50', edgecolor='#E0E0E0', linewidth=0.7)
+    rects2 = ax.bar(x + width/2, fidelities, width, label='Fidelidad (vs Caja Negra)', color='#4682B4', edgecolor='#E0E0E0', linewidth=0.7)
     
-    # Trazar línea de referencia
+    # Trazar línea de referencia para la precisión de la caja negra
     ax.axhline(y=acc_caja_negra*100, color='#800080', linestyle='--', linewidth=1.5, label=f'Caja Negra ({args.modelo.upper()})')
     
     ax.set_ylabel('Porcentaje (%)', fontweight='bold')
@@ -288,6 +303,7 @@ def main():
                         ha='center', va='bottom', fontsize=9, fontweight='bold')
             
     autolabel(rects1)
+    autolabel(rects2)
     
     plt.tight_layout()
     # Guardar gráfico comparativo

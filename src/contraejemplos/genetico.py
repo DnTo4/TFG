@@ -19,6 +19,27 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     Carga y entrena el modelo indicado y calcula los límites de las variables 
     mediante StandardScaler.
     """
+    import os
+    import joblib
+    
+    nombre_dataset = os.path.splitext(os.path.basename(ruta_train))[0]
+    os.makedirs("modelos", exist_ok=True)
+    ruta_cache = f"modelos/cache_{tipo_modelo}_{nombre_dataset}.joblib"
+    
+    if os.path.exists(ruta_cache):
+        try:
+            cache = joblib.load(ruta_cache)
+            # Leer cabecera para verificar nombres de columnas
+            df_temp = pd.read_csv(ruta_train, nrows=1)
+            target_col = df_temp.columns[-1]
+            cols = [c for c in df_temp.columns if c != target_col]
+            if set(cache["nombres"]) == set(cols):
+                print(f"Cargado clasificador base '{tipo_modelo}' preentrenado para '{nombre_dataset}' desde caché.")
+                return cache["modelo"], cache["limites_scaled"], cache["nombres"], cache["scaler"]
+        except Exception as e:
+            pass
+
+
     modelos = {
         "arbol_decision": train_arbol_model,
         "svm": train_svm_model,
@@ -42,7 +63,18 @@ def entrenar_clasificador(ruta_train, ruta_test, tipo_modelo="svm"):
     X_scaled = scaler.transform(X_combined)
     limites_scaled = np.vstack([X_scaled.min(axis=0), X_scaled.max(axis=0)]).T
     
+    try:
+        joblib.dump({
+            "modelo": modelo,
+            "limites_scaled": limites_scaled,
+            "nombres": nombres,
+            "scaler": scaler
+        }, ruta_cache)
+    except Exception as e:
+        pass
+    
     return modelo, limites_scaled, nombres, scaler
+
 
 def evaluar_poblacion(poblacion, modelo, d_caracteristicas, nombres_caracteristicas, sigma_share, scaler):
     """Evaluar el fitness de cada individuo.
