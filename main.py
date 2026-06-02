@@ -23,7 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description="Programa principal - Ejecución de flujo de TFG")
     parser.add_argument("--modelo", type=str, default="svm", choices=["svm", "mlp"], help="Modelo base (svm, mlp)")
     parser.add_argument("--dataset", type=str, default="datos/originales/diabetes.csv", help="Dataset principal")
-    parser.add_argument("--hiperparams", action="store_true", help="Habilitar el estudio de hiperparámetros (muy lento)")
+    parser.add_argument("--hiperparams", action="store_true", help="Habilitar el estudio de hiperparámetros")
     args = parser.parse_args()
 
     print("Inicio de flujo principal de TFG")
