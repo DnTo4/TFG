@@ -239,7 +239,7 @@ def graficar_contraejemplos(df, nombres=None, score=None, var_x=None, var_y=None
         if directorio:
             os.makedirs(directorio, exist_ok=True)
         plt.savefig(ruta_guardar, dpi=150)
-        print(f"[+] Gráfico guardado en: {ruta_guardar}")
+        print(f"Gráfico guardado en: {ruta_guardar}")
     plt.show()
 
 if __name__ == "__main__":
